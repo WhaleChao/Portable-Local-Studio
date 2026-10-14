@@ -173,3 +173,22 @@ test("text chat accepts document attachments without requiring a vision model", 
   assert.match(chat, /type: "document"/);
   assert.match(chat, /if \(!supportsVision\)[\s\S]*?Vision Model Required/);
 });
+
+test("issue 90: llama.cpp backend updates on release bumps and mllama fails with a clear message", () => {
+  const ps1 = read("scripts/setup/setup-llama.ps1");
+  const sh = read("scripts/setup/setup-llama.sh");
+  const server = read("scripts/server/serve.cjs");
+
+  assert.match(ps1, /\.llama-release/);
+  assert.match(sh, /\.llama-release/);
+  assert.match(server, /readGgufArchitecture/);
+  assert.match(server, /mllama/);
+  assert.match(server, /describeLlmProbeFailure/);
+  assert.match(server, /failures\.length === 0 \? \{ preferredBackend/);
+});
+
+test("issue 84: in-app CUDA image backend download also installs the CUDA runtime", () => {
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /runtimeUrl: "https:\/\/github\.com\/leejet\/stable-diffusion\.cpp\/releases\/download\/master-782-b290693\/cudart-sd-bin-win-cu12-x64\.zip"/);
+  assert.match(server, /startImageBackendDownload\(backend\.id, 0, "", "runtime"\)/);
+});

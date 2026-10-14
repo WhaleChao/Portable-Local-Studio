@@ -1896,6 +1896,20 @@ function resolveSystemLlamaServer() {
   return "";
 }
 
+function describeLlmProbeFailure(result, output) {
+  const text = String(output || "").trim().slice(-600);
+  if (text) return text;
+  if (result.error) return result.error.message || String(result.error);
+  const code = result.status;
+  if (code === null || code === undefined) return "Backend did not start (timed out or was killed).";
+  // 0xC0000135 = STATUS_DLL_NOT_FOUND: modular llama.cpp builds need every bundled DLL next to llama-server.exe.
+  if (osPlatform === "win32" && (code >>> 0) === 0xC0000135) {
+    return "A required DLL is missing next to llama-server.exe (exit 0xC0000135). Re-run setup to reinstall the llama.cpp backend, and install the Visual C++ Redistributable and, for CUDA, a current NVIDIA driver.";
+  }
+  if (code !== 0) return `Backend exited with code ${osPlatform === "win32" ? "0x" + (code >>> 0).toString(16).toUpperCase() : code} without listing any devices.`;
+  return "Backend reported no usable devices.";
+}
+
 function probeLlmBackend(backend) {
   if (!backend?.path || !fs.existsSync(backend.path)) {
     return {
@@ -1923,7 +1937,7 @@ function probeLlmBackend(backend) {
       detected,
       devices,
       device: devices[0] || null,
-      error: result.status && !detected ? output.trim().slice(-600) : "",
+      error: !detected ? describeLlmProbeFailure(result, output) : "",
     };
   } catch (err) {
     return {
@@ -4188,6 +4202,52 @@ function buildLlmLoadProfiles(settings = {}, backend = {}) {
   return profiles;
 }
 
+// Architectures that GGUF files can declare but llama.cpp has never implemented.
+// Updating the backend cannot fix these, so fail early with a clear message.
+const LLAMA_CPP_UNSUPPORTED_ARCHITECTURES = {
+  mllama: "Llama 3.2 Vision (mllama) is not supported by llama.cpp, so no backend update can load it. Use a llama.cpp-supported vision model instead (for example Qwen2.5-VL, Gemma 3, or Llava) together with its mmproj file.",
+};
+
+function readGgufArchitecture(modelPath) {
+  let fd = null;
+  try {
+    fd = fs.openSync(modelPath, "r");
+    const buf = Buffer.alloc(64 * 1024);
+    const bytes = fs.readSync(fd, buf, 0, buf.length, 0);
+    if (bytes < 24 || buf.toString("latin1", 0, 4) !== "GGUF") return "";
+    let kvCount = Number(buf.readBigUInt64LE(16));
+    let offset = 24;
+    const readString = () => {
+      const len = Number(buf.readBigUInt64LE(offset));
+      offset += 8;
+      if (len > 4096 || offset + len > bytes) throw new Error("metadata exceeds header window");
+      const value = buf.toString("utf8", offset, offset + len);
+      offset += len;
+      return value;
+    };
+    // GGUF value type sizes for fixed-width scalar types; 8 = string.
+    const scalarSize = { 0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8 };
+    while (kvCount-- > 0) {
+      const key = readString();
+      const type = buf.readUInt32LE(offset);
+      offset += 4;
+      if (type === 8) {
+        const value = readString();
+        if (key === "general.architecture") return value;
+      } else if (scalarSize[type]) {
+        offset += scalarSize[type];
+      } else {
+        return ""; // arrays and unknown types: give up, let llama.cpp report it
+      }
+    }
+  } catch (_) {
+    // Unreadable header: let llama.cpp produce its own error.
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} }
+  }
+  return "";
+}
+
 async function startLlm(settings = {}) {
   const filename = path.basename(String(settings.model || ""));
   const modelPath = path.join(LLM_MODELS, filename);
@@ -4196,6 +4256,11 @@ async function startLlm(settings = {}) {
   }
   if (!filename.toLowerCase().endsWith(".gguf")) {
     throw new Error("Text generation requires a .gguf model.");
+  }
+
+  const architecture = readGgufArchitecture(modelPath).toLowerCase();
+  if (LLAMA_CPP_UNSUPPORTED_ARCHITECTURES[architecture]) {
+    throw new Error(`${filename}: ${LLAMA_CPP_UNSUPPORTED_ARCHITECTURES[architecture]}`);
   }
 
   const candidates = getLlmBackendCandidates();
@@ -4219,7 +4284,9 @@ async function startLlm(settings = {}) {
         await startLlmWithBackend({ ...settings, __loadProfile: profile }, backend);
         llmSettings.backendFallbacks = failures;
         updateLlmModelSettings(filename, {
-          preferredBackend: backend.key,
+          // Only pin the backend when the first choice worked; a CPU fallback after a
+          // failed GPU start must not become the permanent preference.
+          ...(failures.length === 0 ? { preferredBackend: backend.key } : {}),
           lastBackendMode: llmSettings.backendMode,
           lastBackendBinary: llmSettings.backendBinary,
           lastSettings: {
@@ -4474,6 +4541,10 @@ async function startLlmWithBackend(settings = {}, backend) {
     else if (/\-\s+CPU\s+:/i.test(output) && llmSettings.backendMode.startsWith("Auto")) llmSettings.backendMode = "CPU";
     if (/error|failed/i.test(output) && !/no error/i.test(output)) {
       llmError = output.trim().slice(-1200);
+      const unknownArch = output.match(/unknown model architecture:\s*'([^']+)'/i);
+      if (unknownArch) {
+        llmError = `${LLAMA_CPP_UNSUPPORTED_ARCHITECTURES[unknownArch[1].toLowerCase()] || `This llama.cpp build does not support the '${unknownArch[1]}' architecture. Re-run setup to update the backend, or pick a different model.`}\n${llmError}`.slice(-1400);
+      }
     }
   });
   proc.on("exit", (code) => {
@@ -4900,6 +4971,8 @@ const IMAGE_BACKEND_DOWNLOADS = {
     id: "cuda",
     label: "CUDA GPU",
     url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-782-b290693/sd-master-b290693-bin-win-cuda12-x64.zip",
+    // The CUDA build does not bundle cudart64_12.dll / cublas; without it sd-cuda.exe fails to start.
+    runtimeUrl: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-782-b290693/cudart-sd-bin-win-cu12-x64.zip",
     destDir: path.join(ROOT, "app", "backend", "win", "cuda"),
     exeName: "sd-cuda.exe",
     requiredDll: "stable-diffusion.dll",
@@ -4920,7 +4993,7 @@ function listFilesRecursive(dir) {
   return out;
 }
 
-function installImageBackendArchive(zipPath, backend) {
+function installImageBackendArchive(zipPath, backend, runtimeOnly = false) {
   const tempDir = path.join(TOOLS, `image-backend-${backend.id}-extract-${Date.now()}`);
   try {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -4933,6 +5006,13 @@ function installImageBackendArchive(zipPath, backend) {
     }
 
     const files = listFilesRecursive(tempDir);
+    if (runtimeOnly) {
+      const dlls = files.filter((file) => path.extname(file).toLowerCase() === ".dll");
+      if (dlls.length === 0) throw new Error("CUDA runtime archive did not contain any DLL files.");
+      for (const file of dlls) fs.copyFileSync(file, path.join(backend.destDir, path.basename(file)));
+      cachedBackendOptions = null;
+      return;
+    }
     const exeSource = files.find((file) => ["sd-server.exe", "sd.exe"].includes(path.basename(file).toLowerCase()));
     const dllSource = files.find((file) => path.basename(file).toLowerCase() === backend.requiredDll.toLowerCase());
     if (!exeSource || !dllSource) {
@@ -4957,8 +5037,9 @@ function installImageBackendArchive(zipPath, backend) {
   }
 }
 
-function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "") {
-  if (downloadState.active && redirectCount === 0) {
+function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "", stage = "main") {
+  const isRuntimeStage = stage === "runtime";
+  if (downloadState.active && redirectCount === 0 && !isRuntimeStage) {
     throw new Error("Another download is already active.");
   }
   if (osPlatform !== "win32") {
@@ -4970,15 +5051,15 @@ function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "
   }
 
   fs.mkdirSync(TOOLS, { recursive: true });
-  const url = redirectUrl || backend.url;
-  const filename = `${backend.id}-backend.zip`;
+  const url = redirectUrl || (isRuntimeStage ? backend.runtimeUrl : backend.url);
+  const filename = isRuntimeStage ? `${backend.id}-runtime.zip` : `${backend.id}-backend.zip`;
   const destPath = path.join(TOOLS, filename);
   const tempPath = `${destPath}.part`;
   if (redirectCount === 0) {
     try { fs.unlinkSync(tempPath); } catch (_) {}
     downloadState = {
       active: true,
-      filename: backend.label,
+      filename: isRuntimeStage ? `${backend.label} runtime` : backend.label,
       progress: 0,
       speed: "0 MB/s",
       eta: 0,
@@ -5025,7 +5106,7 @@ function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "
       fileStream.close();
       try { fs.unlinkSync(tempPath); } catch (_) {}
       activeDownload = null;
-      startImageBackendDownload(backend.id, redirectCount + 1, nextUrl);
+      startImageBackendDownload(backend.id, redirectCount + 1, nextUrl, stage);
       return;
     }
     if (response.statusCode !== 200) {
@@ -5072,9 +5153,15 @@ function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "
           replaceFileWithRetry(tempPath, destPath);
           downloadState.speed = "Installing";
           downloadState.progress = 95;
-          installImageBackendArchive(destPath, backend);
+          installImageBackendArchive(destPath, backend, isRuntimeStage);
           try { fs.unlinkSync(destPath); } catch (_) {}
           downloadFinalized = true;
+          if (!isRuntimeStage && backend.runtimeUrl) {
+            activeDownload = null;
+            console.log(`  [backend-download] Installed ${backend.label} backend, fetching runtime libraries`);
+            startImageBackendDownload(backend.id, 0, "", "runtime");
+            return;
+          }
           downloadState.active = false;
           downloadState.progress = 100;
           downloadState.downloadedBytes = downloadedBytes;
