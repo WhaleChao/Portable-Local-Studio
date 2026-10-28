@@ -192,3 +192,46 @@ test("issue 84: in-app CUDA image backend download also installs the CUDA runtim
   assert.match(server, /runtimeUrl: "https:\/\/github\.com\/leejet\/stable-diffusion\.cpp\/releases\/download\/master-782-b290693\/cudart-sd-bin-win-cu12-x64\.zip"/);
   assert.match(server, /startImageBackendDownload\(backend\.id, 0, "", "runtime"\)/);
 });
+
+test("issue 96: model downloads reject repository pages and HTML responses", () => {
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /function getModelDownloadUrlIssue/);
+  assert.match(server, /Hugging Face repository page, not a model file/);
+  assert.match(server, /content-type"\] \|\| ""\)\.toLowerCase\(\)\.includes\("text\/html"\)/);
+});
+
+test("issue 85: chat shows reasoning, scrolls only the message list, renders tables, math and PDFs", () => {
+  const chat = read("app/frontend/src/components/TextChat.jsx");
+  assert.doesNotMatch(chat, /<ThinkingBlock/);
+  assert.match(chat, /<ChatThinkingSection/);
+  assert.match(chat, /"<think>"/);
+  assert.doesNotMatch(chat, /\.scrollIntoView\(/);
+  assert.match(chat, /type: "table"/);
+  assert.match(chat, /katex\.renderToString/);
+  assert.match(chat, /extractPdfText/);
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /async function planWebSearchQuery/);
+});
+
+test("issue 82: speech upload converts any browser-decodable audio to 16 kHz WAV", () => {
+  const speech = read("app/frontend/src/components/SpeechTranscriber.jsx");
+  assert.match(speech, /convertAudioFileTo16kWav/);
+  assert.doesNotMatch(speech, /V1 accepts WAV files only/);
+  assert.match(read("scripts/server/serve.cjs"), /readBinaryBody\(req, limitBytes = 1024 \* 1024 \* 1024\)/);
+});
+
+test("issue 87: vision catalog models ship matching projectors and never borrow another model's", () => {
+  const manager = read("app/frontend/src/components/ModelManager.jsx");
+  assert.match(manager, /mmproj-Qwen2\.5-VL-3B-Instruct-Q8_0\.gguf/);
+  assert.match(manager, /mmproj-Qwen2\.5-VL-7B-Instruct-Q8_0\.gguf/);
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /lower\.includes\("qwen2\.5-vl"\)/);
+  assert.doesNotMatch(server, /lower === "mmproj-model-f16\.gguf" \|\| lower\.includes\("mmproj"\)/);
+});
+
+test("issue 86: image backend validation keeps the real failure reason", () => {
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /amdgpu\.si_support=1/);
+  assert.match(server, /build_from_source\.sh/);
+  assert.doesNotMatch(server, /In-app backend downloads are currently available for Windows image backends\./);
+});

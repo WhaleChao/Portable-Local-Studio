@@ -2581,7 +2581,9 @@ async function stopSpeech() {
   speechTranscriptionState = { active: false, phase: "", progress: 0, model: "", filename: "" };
 }
 
-function readBinaryBody(req, limitBytes = 250 * 1024 * 1024) {
+// Uploads arrive as 16 kHz mono WAV (the browser converts other formats), about 115 MB
+// per hour, so 1 GB allows roughly 9 hours of audio.
+function readBinaryBody(req, limitBytes = 1024 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let bytes = 0;
@@ -3380,19 +3382,32 @@ function backendAccepts(binaryPath, backendName) {
     }
 
     const lower = output.toLowerCase();
-    if (lower.includes("backend config failed") || output.includes(`backend '${backendName}' was not found`) || output.includes(`backend '${cliBackendName}' was not found`)) {
+    // Keep the real reason so the UI can show it instead of a generic "did not register".
+    const reject = (reason) => {
+      const detail = output.trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" | ").slice(0, 400);
+      backendValidationErrors[binaryPath] = detail ? `${reason} Backend output: ${detail}` : reason;
       return false;
+    };
+    if (lower.includes("backend config failed") || output.includes(`backend '${backendName}' was not found`) || output.includes(`backend '${cliBackendName}' was not found`)) {
+      return reject(backendName === "vulkan" && osPlatform === "linux"
+        ? "The backend started but found no Vulkan GPU. Check that `vulkaninfo --summary` lists your GPU (not only llvmpipe). Older Radeon HD 7000/8000 (GCN 1.0/1.1) cards need the amdgpu kernel driver for Mesa Vulkan: boot with radeon.si_support=0 amdgpu.si_support=1 (or radeon.cik_support=0 amdgpu.cik_support=1)."
+        : `The backend started but could not use the ${backendName} device.`);
     }
     // Reject binaries that fail at the dynamic linker / glibc level.
     if (lower.includes("glibc") || lower.includes("libc.so") || lower.includes("libstdc++") || lower.includes("cannot open shared object")) {
-      return false;
+      return reject(osPlatform === "linux"
+        ? "This prebuilt backend cannot run on this Linux system (it needs glibc 2.38+ / a newer libstdc++, e.g. Ubuntu 24.04, or a missing shared library). Build it locally with scripts/build/build_from_source.sh."
+        : "This backend is missing a required system library.");
     }
     // A healthy binary prints project-specific log lines when it tries to load the model.
     const isOk = lower.includes("stable-diffusion.cpp") || lower.includes("loading model");
     if (isOk) {
       backendSupportsFlags[binaryPath] = supportsFlags;
+      return true;
     }
-    return isOk;
+    return reject(result.error
+      ? `The backend could not be started: ${result.error.message}.`
+      : `The backend exited (code ${result.status}) without starting.`);
   } catch (_) {
     return false;
   }
@@ -4170,6 +4185,8 @@ function isVisionModelFilename(filename = "") {
     lower.includes("vision") ||
     lower.includes("qwen2vl") ||
     lower.includes("qwen2-vl") ||
+    lower.includes("qwen2.5-vl") ||
+    lower.includes("qwen3-vl") ||
     lower.includes("qwen3.5-4b-vision") ||
     lower.includes("gemma-4") ||
     lower.includes("gemma4") ||
@@ -4438,9 +4455,21 @@ async function startLlmWithBackend(settings = {}, backend) {
           });
         }
         
-        // 2. Match by model family keyword (e.g. matching model containing "gemma-4" with projector containing "gemma-4")
+        // 2. Match a projector named after this exact model, e.g.
+        //    Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf -> mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
         if (!bestMatch) {
-          const keywords = ["gemma-4", "gemma4", "llava", "qwen2vl", "qwen2-vl", "paligemma", "minicpm", "internvl", "phi-3", "phi3", "smolvlm", "moondream"];
+          const baseName = lowerFilename.replace(/\.gguf$/, "").replace(/[-_.](?:i?q\d[\w]*|f16|bf16|f32)$/i, "");
+          if (baseName.length >= 6) {
+            bestMatch = files.find((file) => {
+              const lower = file.toLowerCase();
+              return lower.endsWith(".gguf") && lower.includes("mmproj") && lower.includes(baseName);
+            });
+          }
+        }
+
+        // 3. Match by model family keyword (e.g. matching model containing "gemma-4" with projector containing "gemma-4")
+        if (!bestMatch) {
+          const keywords = ["gemma-4", "gemma4", "llava", "qwen2.5-vl", "qwen3-vl", "qwen2vl", "qwen2-vl", "paligemma", "minicpm", "internvl", "phi-3", "phi3", "smolvlm", "moondream"];
           const matchedKeyword = keywords.find(kw => lowerFilename.includes(kw));
           if (matchedKeyword) {
             bestMatch = files.find(file => {
@@ -4450,12 +4479,11 @@ async function startLlmWithBackend(settings = {}, backend) {
           }
         }
         
-        // 3. General fallback
+        // 4. General fallback: only a generically named projector (e.g. mmproj-model-f16.gguf).
+        //    A projector named after another model (mmproj-Qwen2.5-VL-...) would make
+        //    llama.cpp fail to load this one.
         if (!bestMatch) {
-          bestMatch = files.find(file => {
-            const lower = file.toLowerCase();
-            return lower.endsWith(".gguf") && (lower === "mmproj-model-f16.gguf" || lower.includes("mmproj"));
-          });
+          bestMatch = files.find(file => /^mmproj(?:[-_.]model)?(?:[-_.](?:f16|bf16|f32|q\d\w*))?\.gguf$/i.test(file));
         }
         
         if (bestMatch) {
@@ -5075,7 +5103,9 @@ function startImageBackendDownload(backendId, redirectCount = 0, redirectUrl = "
     throw new Error("Another download is already active.");
   }
   if (osPlatform !== "win32") {
-    throw new Error("In-app backend downloads are currently available for Windows image backends.");
+    throw new Error(osPlatform === "linux"
+      ? "In-app backend downloads are only available on Windows. On Linux, run `bash scripts/setup/setup.sh` (it installs the Vulkan/CUDA/ROCm backends that match your GPU), or build them with scripts/build/build_from_source.sh if the prebuilt binaries do not run on your distribution."
+      : "In-app backend downloads are only available on Windows. Run the platform setup script again to install or repair backends.");
   }
   const backend = IMAGE_BACKEND_DOWNLOADS[String(backendId || "").toLowerCase()];
   if (!backend) {
@@ -5261,6 +5291,29 @@ function describeDownloadHttpError(statusCode, url, headers = {}) {
   return `HTTP ${statusCode}`;
 }
 
+const MODEL_FILE_URL_HINT = "Use a direct link to a single model file ending in .safetensors, .gguf or .ckpt. On Hugging Face, open the repository's Files tab and copy the download link of one file.";
+
+// Rejects URLs that point at a web page instead of a downloadable file, e.g. a
+// Hugging Face repository page, which otherwise "downloads" as a small HTML file.
+function getModelDownloadUrlIssue(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url || "").trim());
+  } catch (_) {
+    return "That is not a valid URL.";
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return "Only http(s) download URLs are supported.";
+  if (/(^|\.)huggingface\.co$/i.test(parsed.hostname)) {
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const isFileUrl = parts.includes("resolve") || parts.includes("blob");
+    if (!isFileUrl) return `That URL is a Hugging Face repository page, not a model file. ${MODEL_FILE_URL_HINT}`;
+  }
+  if (!path.extname(path.basename(parsed.pathname))) {
+    return `That URL does not point to a model file (no file extension). ${MODEL_FILE_URL_HINT}`;
+  }
+  return "";
+}
+
 function startModelDownload(url, overrideFilename = null, targetDir = MODELS, kind = "image", redirectCount = 0) {
   if (downloadState.active && !overrideFilename) {
     console.log("  [download] Already downloading a model");
@@ -5362,6 +5415,13 @@ function startModelDownload(url, overrideFilename = null, targetDir = MODELS, ki
 
     if (response.statusCode !== 200) {
       failDownload(describeDownloadHttpError(response.statusCode, url, response.headers));
+      return;
+    }
+
+    // Repository pages, login walls and error pages come back as 200 + text/html.
+    if (String(response.headers["content-type"] || "").toLowerCase().includes("text/html")) {
+      response.resume();
+      failDownload(`That URL returned a web page, not a model file. ${MODEL_FILE_URL_HINT}`);
       return;
     }
 
@@ -5496,7 +5556,7 @@ function cancelModelDownload() {
 
 // ── MIME types ────────────────────────────────────────────────────────────────
 const MIME = {
-  ".html": "text/html", ".js": "application/javascript",
+  ".html": "text/html", ".js": "application/javascript", ".mjs": "application/javascript",
   ".css":  "text/css",  ".png": "image/png",
   ".jpg":  "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml",
   ".ico":  "image/x-icon", ".json": "application/json", ".wav": "audio/wav", ".txt": "text/plain",
@@ -6536,12 +6596,58 @@ function getLastUserQuery(messages) {
   return "";
 }
 
+// Asks the loaded model whether the latest message needs a web search and, if so, for a
+// standalone query that resolves references to earlier turns ("what about its price?").
+// Returns "" when the model decides no search is needed, or null if planning failed.
+async function planWebSearchQuery(messages) {
+  const recent = messages
+    .filter((message) => message?.role === "user" || message?.role === "assistant")
+    .slice(-6)
+    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${getMessageText(message.content).replace(/<think>[\s\S]*?<\/think>/g, "").trim().slice(0, 600)}`)
+    .join("\n");
+  if (!recent) return null;
+  try {
+    const result = await requestJson(`http://127.0.0.1:${PORT_LLM}/v1/chat/completions`, {
+      model: llmSettings.model || "local-model",
+      messages: [
+        {
+          role: "system",
+          content: "You decide whether answering the user's latest message needs a web search. " +
+            "If it does, reply with ONLY a short standalone search query (max 12 words) that includes any names or topics the message refers to from earlier in the conversation. " +
+            "If it does not (greetings, chit-chat, rewriting or explaining text already in the chat, math, coding with no recent facts), reply with ONLY the word NONE.",
+        },
+        { role: "user", content: `Conversation:\n${recent}\n\nSearch query for the latest user message (or NONE):` },
+      ],
+      temperature: 0,
+      max_tokens: 48,
+      stream: false,
+      chat_template_kwargs: { enable_thinking: false },
+    }, 30000);
+    const raw = String(result?.choices?.[0]?.message?.content || "")
+      .replace(/<think>[\s\S]*?<\/think>/g, "")
+      .split("\n").map((line) => line.trim()).find(Boolean) || "";
+    const query = raw.replace(/^(search query|query)\s*:\s*/i, "").replace(/^["'`]+|["'`]+$/g, "").trim();
+    if (!query) return null;
+    if (/^none\.?$/i.test(query)) return "";
+    return query.slice(0, 200);
+  } catch (err) {
+    console.warn("  [web-search] Query planning failed, using the last message:", err.message || err);
+    return null;
+  }
+}
+
 async function augmentMessagesWithWebSearch(messages, body) {
   if (body.useWeb !== true && body.use_web !== true) {
     return { messages, webSources: [], webContext: "" };
   }
-  const query = String(body.webQuery || body.query || getLastUserQuery(messages) || "").trim();
+  let query = String(body.webQuery || body.query || "").trim();
+  if (!query) {
+    const planned = llmReady ? await planWebSearchQuery(messages) : null;
+    if (planned === "") return { messages, webSources: [], webContext: "", webSkipped: true };
+    query = String(planned || getLastUserQuery(messages) || "").trim();
+  }
   if (!query) return { messages, webSources: [], webContext: "" };
+  console.log(`  [web-search] Query: ${query}`);
 
   const result = await comprehensiveWebSearch(query, {
     timeFilter: body.timeFilter || body.time_filter || "any",
@@ -7069,7 +7175,9 @@ async function getLlmfitRecommendations(useCase = "chat", limit = 10) {
     if (!body) return;
     const { url } = body;
     if (!url) return json(res, 400, { error: "URL is required" });
-    
+    const urlIssue = getModelDownloadUrlIssue(url);
+    if (urlIssue) return json(res, 400, { ok: false, error: urlIssue });
+
     startModelDownload(url);
     return json(res, 200, { ok: true, message: "Download started" });
   }
