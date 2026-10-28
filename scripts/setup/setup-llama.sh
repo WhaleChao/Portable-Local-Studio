@@ -20,8 +20,11 @@ download_and_extract() {
   local url="https://github.com/ggml-org/llama.cpp/releases/download/$RELEASE/$asset"
 
   if [[ -x "$dest/llama-server" ]]; then
-    echo "   OK   llama.cpp backend already ready: $dest"
-    return
+    if [[ "$(cat "$dest/.llama-release" 2>/dev/null || true)" == "$RELEASE" ]]; then
+      echo "   OK   llama.cpp backend already ready ($RELEASE): $dest"
+      return
+    fi
+    echo "   >>   Updating llama.cpp backend to $RELEASE: $dest"
   fi
 
   mkdir -p "$TOOLS_DIR" "$dest"
@@ -29,6 +32,8 @@ download_and_extract() {
   echo "   >>   Downloading $asset"
   curl -fSL --progress-bar "$url" -o "$archive.part"
   mv "$archive.part" "$archive"
+  # Clear the previous release only after the new archive downloaded, so a failed update keeps the old backend.
+  find "$dest" -mindepth 1 -delete 2>/dev/null || true
   if command -v python3 >/dev/null 2>&1; then
     python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1
   else
@@ -41,6 +46,7 @@ download_and_extract() {
     echo "   XX   llama-server was not found after extracting $asset" >&2
     return 1
   fi
+  echo "$RELEASE" > "$dest/.llama-release"
 }
 
 download_and_extract_optional() {
@@ -48,7 +54,7 @@ download_and_extract_optional() {
   local dest="$2"
   local reason="$3"
 
-  if [[ -x "$dest/llama-server" ]]; then
+  if [[ -x "$dest/llama-server" && "$(cat "$dest/.llama-release" 2>/dev/null || true)" == "$RELEASE" ]]; then
     echo "   OK   optional llama.cpp backend already ready: $dest"
     return 0
   fi
