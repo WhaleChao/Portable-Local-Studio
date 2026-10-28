@@ -89,6 +89,8 @@ goto :launch
 
 :: -- Launch -------------------------------------------------------------------
 :launch
+:: Keep the llama.cpp backend on the pinned release (existing installs never re-run setup).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup\update-llama.ps1"
 echo.
 echo  ============================================================
 echo   UNCENSORED AI STUDIO      ^|  Launching...

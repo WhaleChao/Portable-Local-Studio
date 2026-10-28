@@ -218,6 +218,11 @@ if [[ -n "$SETUP_REASON" ]]; then
   fi
 fi
 
+# ── Keep the llama.cpp backend on the pinned release ──────────────────────
+# Existing installs never re-run setup, so update the text backend when it is older
+# than the release setup-llama.sh installs (backend fixes, new model support).
+bash "$SCRIPT_DIR/scripts/setup/update-llama.sh"
+
 # ── Launch ─────────────────────────────────────────────────────────────────
 clear 2>/dev/null || true
 echo ""

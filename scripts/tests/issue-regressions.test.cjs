@@ -235,3 +235,18 @@ test("issue 86: image backend validation keeps the real failure reason", () => {
   assert.match(server, /build_from_source\.sh/);
   assert.doesNotMatch(server, /In-app backend downloads are currently available for Windows image backends\./);
 });
+
+test("launchers update a stale llama.cpp backend so existing installs get backend fixes", () => {
+  assert.match(read("mac.sh"), /scripts\/setup\/update-llama\.sh/);
+  assert.match(read("linux.sh"), /scripts\/setup\/update-llama\.sh/);
+  assert.match(read("windows.bat"), /scripts\\setup\\update-llama\.ps1/);
+  const sh = read("scripts/setup/update-llama.sh");
+  assert.match(sh, /\.llama-release/);
+  assert.match(sh, /setup-llama\.sh/);
+  const ps1 = read("scripts/setup/update-llama.ps1");
+  assert.match(ps1, /\.llama-release/);
+  assert.match(ps1, /setup-llama\.ps1/);
+  // The release the updater compares against must be the one setup-llama actually installs.
+  assert.match(read("scripts/setup/setup-llama.sh"), /^RELEASE="\$\{LLAMA_RELEASE:-b\d+\}"$/m);
+  assert.match(read("scripts/setup/setup-llama.ps1"), /param\(\[string\]\$Release = "b\d+"\)/);
+});
