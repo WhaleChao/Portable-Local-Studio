@@ -873,6 +873,8 @@ function App() {
             showConfirm={showConfirm}
             selectedOutput={selectedTtsOutput}
             onOutputsChanged={refreshTtsOutputs}
+            outputs={ttsOutputs}
+            onDeleteOutput={handleDeleteTtsOutput}
             ttsSettings={ttsSettings}
             setTtsSettings={setTtsSettings}
           />
