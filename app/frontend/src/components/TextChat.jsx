@@ -1281,25 +1281,19 @@ function parseInlineMarkdown(text) {
       return <MathFormula key={idx} tex={part.slice(1, -1)} />;
     }
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={idx} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
     }
     if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={idx} style={{ 
-        fontFamily: "monospace", 
-        background: "var(--md-sys-color-surface-variant)", 
-        padding: "2px 4px", 
-        borderRadius: "4px",
-        fontSize: "0.85rem"
-      }}>{part.slice(1, -1)}</code>;
+      return <code key={idx} className="markdown-inline-code">{part.slice(1, -1)}</code>;
     }
     if (part.startsWith("*") && part.endsWith("*")) {
-      return <em key={idx} style={{ fontStyle: "italic" }}>{part.slice(1, -1)}</em>;
+      return <em key={idx}>{part.slice(1, -1)}</em>;
     }
     if (part.startsWith("[") && part.includes("](") && part.endsWith(")")) {
       const match = part.match(/\[(.*?)\]\((.*?)\)/);
       if (match) {
         return (
-          <a key={idx} href={match[2]} target="_blank" rel="noopener noreferrer" style={{ color: "var(--md-sys-color-primary)", textDecoration: "underline" }}>
+          <a key={idx} href={match[2]} target="_blank" rel="noopener noreferrer" className="markdown-link">
             {match[1]}
           </a>
         );
@@ -1317,7 +1311,7 @@ export function MarkdownRenderer({ content }) {
   const splitTableRow = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
 
   return (
-    <div className="markdown-body" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <div className="markdown-body">
       {parts.map((part, index) => {
         if (part.length > 4 && part.startsWith("$$") && part.endsWith("$$")) {
           return <MathFormula key={index} tex={part.slice(2, -2).trim()} display />;
@@ -1330,20 +1324,8 @@ export function MarkdownRenderer({ content }) {
           const lang = match ? match[1] : "";
           const code = match ? match[2] : part.slice(3, -3);
           return (
-            <pre key={index} style={{ 
-              background: "var(--md-sys-color-surface-variant)", 
-              color: "var(--md-sys-color-on-surface-variant)",
-              padding: "12px", 
-              borderRadius: "6px", 
-              fontFamily: "monospace", 
-              fontSize: "0.85rem",
-              overflowX: "auto",
-              margin: "6px 0",
-              border: "1px solid var(--border-color)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all"
-            }}>
-              {lang && <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginBottom: "4px", textTransform: "uppercase", fontWeight: 600 }}>{lang}</div>}
+            <pre key={index} className="markdown-code-block">
+              {lang && <div className="markdown-code-lang">{lang}</div>}
               <code>{code.trim()}</code>
             </pre>
           );
@@ -1367,6 +1349,17 @@ export function MarkdownRenderer({ content }) {
               }
               i -= 1;
               blocks.push({ type: "table", header, rows });
+            } else if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+              if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
+              blocks.push({ type: "hr" });
+            } else if (trimmed.startsWith(">")) {
+              const quoteLine = trimmed.replace(/^>\s?/, "");
+              if (currentBlock && currentBlock.type === "quote") {
+                currentBlock.lines.push(quoteLine);
+              } else {
+                if (currentBlock) { blocks.push(currentBlock); }
+                currentBlock = { type: "quote", lines: [quoteLine] };
+              }
             } else if (trimmed.startsWith("### ")) {
               if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
               blocks.push({ type: "h4", content: trimmed.slice(4) });
@@ -1396,7 +1389,6 @@ export function MarkdownRenderer({ content }) {
                 }
               } else if (trimmed === "") {
                 if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
-                blocks.push({ type: "spacer" });
               } else {
                 if (currentBlock && currentBlock.type === "p") {
                   currentBlock.lines.push(line);
@@ -1414,24 +1406,24 @@ export function MarkdownRenderer({ content }) {
           return blocks.map((block, blockIdx) => {
             switch (block.type) {
               case "h4":
-                return <h4 key={blockIdx} style={{ fontSize: "1.05rem", fontWeight: 700, margin: "10px 0 4px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h4>;
+                return <h4 key={blockIdx}>{parseInlineMarkdown(block.content)}</h4>;
               case "h3":
-                return <h3 key={blockIdx} style={{ fontSize: "1.2rem", fontWeight: 700, margin: "14px 0 6px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h3>;
+                return <h3 key={blockIdx}>{parseInlineMarkdown(block.content)}</h3>;
               case "h2":
-                return <h2 key={blockIdx} style={{ fontSize: "1.35rem", fontWeight: 700, margin: "18px 0 8px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h2>;
+                return <h2 key={blockIdx}>{parseInlineMarkdown(block.content)}</h2>;
               case "ul":
                 return (
-                  <ul key={blockIdx} style={{ margin: "6px 0 6px 24px", padding: 0, listStyleType: "disc", display: "block" }}>
+                  <ul key={blockIdx}>
                     {block.items.map((item, itemIdx) => (
-                      <li key={itemIdx} style={{ fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "4px", display: "list-item" }}>{parseInlineMarkdown(item)}</li>
+                      <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
                     ))}
                   </ul>
                 );
               case "ol":
                 return (
-                  <ol key={blockIdx} style={{ margin: "6px 0 6px 24px", padding: 0, listStyleType: "decimal", display: "block" }}>
+                  <ol key={blockIdx}>
                     {block.items.map((item, itemIdx) => (
-                      <li key={itemIdx} style={{ fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "4px", display: "list-item" }}>{parseInlineMarkdown(item)}</li>
+                      <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
                     ))}
                   </ol>
                 );
@@ -1452,10 +1444,12 @@ export function MarkdownRenderer({ content }) {
                     </table>
                   </div>
                 );
-              case "spacer":
-                return <div key={blockIdx} style={{ height: "6px" }} />;
+              case "hr":
+                return <hr key={blockIdx} />;
+              case "quote":
+                return <blockquote key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</blockquote>;
               case "p":
-                return <p key={blockIdx} style={{ margin: "2px 0", fontSize: "0.9rem", lineHeight: 1.5 }}>{parseInlineMarkdown(block.lines.join(" "))}</p>;
+                return <p key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</p>;
               default:
                 return null;
             }

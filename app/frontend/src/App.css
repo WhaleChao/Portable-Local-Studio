@@ -3587,6 +3587,133 @@ html[data-theme^="dark"] .settings-subsection:hover {
 
 
 /* ─── Chat Markdown: tables and math ─────────────────────────── */
+/* Markdown in replies: document rhythm, neutral headings, no accent color */
+.markdown-body > * {
+  margin: 0;
+}
+
+.markdown-body > * + * {
+  margin-top: 12px;
+}
+
+.markdown-body p,
+.markdown-body li {
+  font-size: inherit;
+  line-height: 1.65;
+}
+
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  color: var(--md-sys-color-on-surface);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.markdown-body h2 {
+  font-size: 1.3rem;
+}
+
+.markdown-body h3 {
+  font-size: 1.15rem;
+}
+
+.markdown-body h4 {
+  font-size: 1rem;
+}
+
+.markdown-body > * + h2,
+.markdown-body > * + h3,
+.markdown-body > * + h4 {
+  margin-top: 22px;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.4em;
+}
+
+.markdown-body ul {
+  list-style: disc;
+}
+
+.markdown-body ol {
+  list-style: decimal;
+}
+
+.markdown-body li + li {
+  margin-top: 4px;
+}
+
+.markdown-body li::marker {
+  color: var(--md-sys-color-outline);
+}
+
+.markdown-body strong {
+  font-weight: 600;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+}
+
+.markdown-body > hr {
+  margin-top: 20px;
+}
+
+.markdown-body > hr + * {
+  margin-top: 20px;
+}
+
+.markdown-body blockquote {
+  padding-left: 14px;
+  border-left: 3px solid var(--border-color);
+  border-radius: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.markdown-link {
+  color: var(--md-sys-color-on-surface);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--md-sys-color-on-surface) 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+.markdown-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.markdown-inline-code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--sidebar-active, var(--md-sys-color-surface-variant));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+
+.markdown-code-block {
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-code-lang {
+  margin-bottom: 6px;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--md-sys-color-outline);
+}
+
 .chat-table-wrap {
   max-width: 100%;
   overflow-x: auto;
