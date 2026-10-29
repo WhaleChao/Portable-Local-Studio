@@ -1,10 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRightLeft,
+  Check,
+  ChevronDown,
+  Clock,
+  Copy,
+  Download,
   FileAudio,
+  Languages,
   LoaderCircle,
   Mic,
-  Play,
-  Save,
+  RefreshCw,
+  SlidersHorizontal,
   Square,
   Upload,
   X,
@@ -16,9 +23,10 @@ import {
   stopSpeech,
   transcribeSpeech,
 } from "../services/api";
+import "../styles/transcribe.css";
 
 const LANGUAGE_OPTIONS = [
-  { value: "auto", label: "Auto detect" },
+  { value: "auto", label: "Auto-detect" },
   { value: "en", label: "English" },
   { value: "es", label: "Spanish" },
   { value: "fr", label: "French" },
@@ -153,6 +161,25 @@ function formatTranscriptText(transcription, showTimestamps) {
     .join("\n");
 }
 
+function formatClock(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+// Every clip handed to setCurrentAudio is 16 kHz mono PCM16 WAV (44-byte header).
+function wavDurationSeconds(blob) {
+  if (!blob?.size) return 0;
+  return Math.max(0, blob.size - 44) / (16000 * 2);
+}
+
+function stripExtension(name) {
+  return String(name || "").replace(/\.[^.\/\\]+$/, "");
+}
+
 export default function SpeechTranscriber({
   showAlert,
   showConfirm,
@@ -173,19 +200,29 @@ export default function SpeechTranscriber({
   const setLanguage = (val) => setSpeechSettings((prev) => ({ ...prev, language: val }));
   const setThreads = (val) => setSpeechSettings((prev) => ({ ...prev, threads: val }));
   const setBackendPreference = (val) => setSpeechSettings((prev) => ({ ...prev, backendPreference: val }));
+  const setTranslate = (val) => setSpeechSettings((prev) => ({ ...prev, translate: val }));
 
   const [audioBlob, setAudioBlob] = useState(null);
   const [audioName, setAudioName] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isConvertingAudio, setIsConvertingAudio] = useState(false);
   const [result, setResult] = useState(null);
   const [resultText, setResultText] = useState("");
   const [showTimestamps, setShowTimestamps] = useState(false);
   const [isLoadingModel, setIsLoadingModel] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [transcribedBlob, setTranscribedBlob] = useState(null);
   const recorderRef = useRef(null);
   const abortRef = useRef(null);
+  const modelMenuRef = useRef(null);
+  const optionsRef = useRef(null);
+  const dragDepthRef = useRef(0);
 
   const installedModels = useMemo(() => models.filter((model) => model.installed), [models]);
   const isSelectedRuntimeLoaded = status.ready &&
@@ -217,7 +254,7 @@ export default function SpeechTranscriber({
   }, []);
 
   useEffect(() => {
-    refresh().catch((err) => showAlert?.({ title: "Speech Status Failed", message: err.message || String(err), danger: true }));
+    refresh().catch((err) => showAlert?.({ title: "Speech status failed", message: err.message || String(err), danger: true }));
     const interval = setInterval(() => {
       refresh().catch(() => {});
     }, 2000);
@@ -241,6 +278,41 @@ export default function SpeechTranscriber({
     };
   }, [audioUrl]);
 
+  // Elapsed time while the microphone is recording.
+  useEffect(() => {
+    if (!isRecording) return undefined;
+    const startedAt = Date.now();
+    setRecordingSeconds(0);
+    const timer = setInterval(() => setRecordingSeconds((Date.now() - startedAt) / 1000), 250);
+    return () => clearInterval(timer);
+  }, [isRecording]);
+
+  // Close the model menu and options popover on outside click or Escape.
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target)) setShowModelMenu(false);
+      if (optionsRef.current && !optionsRef.current.contains(event.target)) setShowOptions(false);
+    }
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setShowModelMenu(false);
+        setShowOptions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
   const setCurrentAudio = useCallback((blob, name) => {
     setAudioBlob(blob);
     setAudioName(name);
@@ -261,20 +333,34 @@ export default function SpeechTranscriber({
     });
   }, []);
 
-  const handleLoadSpeechModel = async () => {
-    if (!selectedModel) return;
+  // Loads the given Whisper model (defaults to the selected one), same as the old Load button.
+  const handleLoadSpeechModel = async (filename = selectedModel) => {
+    if (!filename) return;
+    setSelectedModel(filename);
+    const alreadyLoaded = status.ready &&
+      status.settings?.model === filename &&
+      (status.settings?.backendPreference || "auto") === backendPreference;
     setIsLoadingModel(true);
     try {
-      if (!isSelectedRuntimeLoaded) {
-        await startSpeech(selectedModel, { language, threads, backendPreference });
+      if (!alreadyLoaded) {
+        await startSpeech(filename, { language, threads, backendPreference });
       }
       await refresh();
     } catch (err) {
-      showAlert?.({ title: "Speech Model Load Failed", message: err.message || String(err), danger: true });
+      showAlert?.({ title: "Speech model did not load", message: err.message || String(err), danger: true });
     } finally {
       setIsLoadingModel(false);
     }
   };
+
+  const handleStopRuntime = () => {
+    stopSpeech().then(refresh).catch((err) => showAlert?.({ title: "Could not stop the runtime", message: err.message || String(err), danger: true }));
+  };
+
+  const handleRefresh = () => {
+    refresh().catch((err) => showAlert?.({ title: "Speech status failed", message: err.message || String(err), danger: true }));
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -290,7 +376,7 @@ export default function SpeechTranscriber({
       recorderRef.current = { stream, audioContext, source, processor, chunks, sampleRate: audioContext.sampleRate };
       setIsRecording(true);
     } catch (err) {
-      showAlert?.({ title: "Microphone Failed", message: err.message || String(err), danger: true });
+      showAlert?.({ title: "Microphone unavailable", message: err.message || String(err), danger: true });
     }
   };
 
@@ -309,19 +395,53 @@ export default function SpeechTranscriber({
     setCurrentAudio(wav, `recording-${new Date().toISOString().replace(/[:.]/g, "-")}.wav`);
   };
 
-  const handleUploadAudio = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+  // Shared by the Upload button and drag-and-drop.
+  const handleAudioFile = async (file) => {
     if (!file) return;
     setIsConvertingAudio(true);
     try {
       const wav = await convertAudioFileTo16kWav(file);
       setCurrentAudio(wav, file.name.replace(/\.[^.]+$/, "") + ".wav");
     } catch (err) {
-      showAlert?.({ title: "Unsupported Audio", message: err.message || String(err), danger: true });
+      showAlert?.({ title: "Unsupported audio", message: err.message || String(err), danger: true });
     } finally {
       setIsConvertingAudio(false);
     }
+  };
+
+  const handleUploadAudio = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    await handleAudioFile(file);
+  };
+
+  const dropDisabled = isConvertingAudio || isTranscribing || isRecording;
+
+  const handleDragEnter = (event) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    if (!dropDisabled) setIsDragging(true);
+  };
+
+  const handleDragOver = (event) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = dropDisabled ? "none" : "copy";
+  };
+
+  const handleDragLeave = () => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragging(false);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragging(false);
+    if (dropDisabled) return;
+    const file = event.dataTransfer?.files?.[0];
+    handleAudioFile(file);
   };
 
   const handleTranscribe = async () => {
@@ -351,19 +471,20 @@ export default function SpeechTranscriber({
         signal: controller.signal,
       });
       setResult(transcription);
+      setTranscribedBlob(audioBlob);
       await refresh();
       await onTranscriptionsChanged?.();
 
       if (transcription?.text?.toLowerCase().includes("foreign language")) {
         showAlert?.({
-          title: "Foreign Language Detected",
-          message: "The loaded model is English-only and cannot transcribe non-English speech. Please download and load a Multilingual model (e.g. Whisper Base Multilingual) from the Model Manager to transcribe this audio.",
+          title: "Foreign language detected",
+          message: "The loaded model is English-only and cannot transcribe non-English speech. Download a multilingual Whisper model (for example Whisper Base Multilingual) in Models, load it, and transcribe again.",
           danger: false,
         });
       }
     } catch (err) {
       if (err.name !== "AbortError") {
-        showAlert?.({ title: "Transcription Failed", message: err.message || String(err), danger: true });
+        showAlert?.({ title: "Transcription failed", message: err.message || String(err), danger: true });
       }
     } finally {
       abortRef.current = null;
@@ -386,200 +507,412 @@ export default function SpeechTranscriber({
     downloadBlob("transcription.json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
   };
 
-  return (
-    <div className="workspace-area speech-workspace">
-      <div className="workspace-title-section">
-        <h2 className="workspace-title">Speech Transcriber</h2>
-        <p className="workspace-subtitle">
-          Record microphone audio or upload an audio file (WAV, MP3, M4A, OGG, FLAC, WebM), then transcribe locally with whisper.cpp.
-        </p>
-      </div>
+  const copyText = async () => {
+    if (!resultText.trim()) return;
+    try {
+      await navigator.clipboard.writeText(resultText);
+      setCopied(true);
+    } catch (err) {
+      showAlert?.({ title: "Could not copy", message: err.message || String(err), danger: true });
+    }
+  };
 
-      <div className="speech-grid">
-        <section className="m3-card speech-panel">
-          <div className="speech-panel-header">
-            <h3>Runtime</h3>
-            <span className={`status-chip ${status.backendInstalled ? "" : "offline"}`}>
-              {status.backendInstalled ? (status.ready ? "Ready" : "Installed") : "Backend missing"}
-            </span>
+  const selectedModelInfo = installedModels.find((model) => model.filename === selectedModel);
+  const modelLabel = selectedModelInfo?.name || selectedModel || (installedModels.length ? "Choose a Whisper model" : "No Whisper models");
+  const segments = Array.isArray(result?.raw?.transcription) ? result.raw.transcription : [];
+  const hasSegments = segments.length > 0;
+  const transcriptTitle = stripExtension(
+    result?.displayName || result?.sourceFilename || result?.textFile || result?.filename || audioName,
+  ) || "Transcript";
+  const runtimeLabel = status.backendInstalled ? (status.ready ? "Ready" : "Installed") : "Backend missing";
+  const languageLabel = LANGUAGE_OPTIONS.find((item) => item.value === language)?.label || "Auto-detect";
+  const audioDuration = wavDurationSeconds(audioBlob);
+
+  const modelPicker = (
+    <div ref={modelMenuRef} className="chat-model-picker">
+      <button
+        type="button"
+        onClick={() => setShowModelMenu((open) => !open)}
+        className={`chat-model-trigger ${showModelMenu ? "active" : ""}`}
+        disabled={isTranscribing}
+        aria-haspopup="menu"
+        aria-expanded={showModelMenu}
+        title={selectedModel || "Choose a Whisper model"}
+      >
+        {isLoadingModel
+          ? <LoaderCircle size={14} className="transcribe-spin" aria-hidden="true" />
+          : isSelectedRuntimeLoaded && <span className="chat-model-dot" aria-hidden="true" />}
+        <span className="chat-model-trigger-label">{modelLabel}</span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </button>
+
+      {showModelMenu && (
+        <div className="chat-model-menu" role="menu">
+          <div className="chat-model-menu-label">Whisper models</div>
+          {installedModels.length === 0 && (
+            <div className="chat-model-menu-label transcribe-menu-note">
+              No models yet. Download one in Models, Speech models.
+            </div>
+          )}
+          {installedModels.map((model) => {
+            const isActive = status.ready && status.settings?.model === model.filename;
+            return (
+              <button
+                type="button"
+                role="menuitem"
+                key={model.id || model.filename}
+                className={`chat-model-menu-item ${model.filename === selectedModel ? "selected" : ""}`}
+                onClick={() => {
+                  setShowModelMenu(false);
+                  handleLoadSpeechModel(model.filename);
+                }}
+                disabled={isLoadingModel}
+                title={model.filename}
+              >
+                <span className="chat-model-menu-name">{model.name || model.filename}</span>
+                {isActive && <span className="chat-model-menu-badge">Loaded</span>}
+              </button>
+            );
+          })}
+          <div className="chat-model-menu-divider" />
+          <button
+            type="button"
+            role="menuitem"
+            className="chat-model-menu-item"
+            onClick={() => {
+              setShowModelMenu(false);
+              handleRefresh();
+            }}
+          >
+            <RefreshCw size={14} aria-hidden="true" />
+            <span className="chat-model-menu-name">Refresh</span>
+          </button>
+          {status.ready && (
+            <button
+              type="button"
+              role="menuitem"
+              className="chat-model-menu-item"
+              onClick={() => {
+                setShowModelMenu(false);
+                handleStopRuntime();
+              }}
+            >
+              <Square size={14} aria-hidden="true" />
+              <span className="chat-model-menu-name">Unload model</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const optionsPopover = (
+    <div ref={optionsRef} className="transcribe-options">
+      <button
+        type="button"
+        className={`icon-btn ${showOptions ? "active" : ""}`}
+        onClick={() => setShowOptions((open) => !open)}
+        aria-label="Runtime options"
+        title="Runtime options"
+        aria-haspopup="dialog"
+        aria-expanded={showOptions}
+      >
+        <SlidersHorizontal size={18} aria-hidden="true" />
+      </button>
+      {showOptions && (
+        <div className="popover transcribe-popover" role="dialog" aria-label="Runtime options">
+          <div className="transcribe-popover-status">
+            <span className="field-label">Runtime</span>
+            <span className={`tag ${status.ready ? "tag-success" : ""}`}>{runtimeLabel}</span>
           </div>
-
-          {status.error && <div className="text-progress error">{status.error}</div>}
-
-          <label className="speech-label">
-            Whisper model
-            <select className="m3-input" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-              {installedModels.length === 0 && <option value="">No downloaded speech models</option>}
-              {installedModels.map((model) => (
-                <option key={model.id || model.filename} value={model.filename}>
-                  {model.name || model.filename}
+          <label className="field">
+            <span className="field-label">Backend</span>
+            <select
+              className="transcribe-input"
+              value={backendPreference}
+              onChange={(event) => setBackendPreference(event.target.value)}
+            >
+              <option value="auto">Auto (GPU if installed)</option>
+              {(status.backends || []).map((backend) => (
+                <option key={backend.key} value={backend.key}>
+                  {backend.label}{backend.installed ? " - installed" : " - missing"}
                 </option>
               ))}
             </select>
           </label>
-
-          <div className="speech-controls-row">
-            <label className="speech-label">
-              Backend
-              <select className="m3-input" value={backendPreference} onChange={(event) => setBackendPreference(event.target.value)}>
-                <option value="auto">Auto (GPU if installed)</option>
-                {(status.backends || []).map((backend) => (
-                  <option key={backend.key} value={backend.key}>
-                    {backend.label}{backend.installed ? " - installed" : " - missing"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="speech-label">
-              Language
-              <select className="m3-input" value={language} onChange={(event) => setLanguage(event.target.value)}>
-                {LANGUAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <label className="speech-label">
-              Threads
-              <input
-                className="m3-input"
-                type="number"
-                min="1"
-                max="32"
-                value={threads}
-                onChange={(event) => setThreads(Math.max(1, Math.min(32, Number(event.target.value) || 1)))}
-              />
-            </label>
-          </div>
-          <div style={{ marginTop: "10px", paddingLeft: "2px" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.82rem", cursor: "pointer", color: "var(--md-sys-color-on-surface)" }}>
-              <input
-                type="checkbox"
-                checked={translate}
-                onChange={(event) => setSpeechSettings((prev) => ({ ...prev, translate: event.target.checked }))}
-                style={{ cursor: "pointer", width: "15px", height: "15px" }}
-              />
-              <span>Translate to English</span>
-            </label>
-          </div>
-
-          <div className="speech-button-row">
+          <label className="field">
+            <span className="field-label">Threads</span>
+            <input
+              className="transcribe-input"
+              type="number"
+              min="1"
+              max="32"
+              value={threads}
+              onChange={(event) => setThreads(Math.max(1, Math.min(32, Number(event.target.value) || 1)))}
+            />
+            <span className="field-hint">CPU threads whisper.cpp uses, 1 to 32.</span>
+          </label>
+          {selectedModel && !isSelectedRuntimeLoaded && (
             <button
-              className="m3-btn m3-btn-filled"
-              onClick={handleLoadSpeechModel}
-              disabled={!selectedModel || isLoadingModel || isTranscribing || isSelectedRuntimeLoaded}
+              type="button"
+              className="btn transcribe-popover-action"
+              onClick={() => handleLoadSpeechModel(selectedModel)}
+              disabled={isLoadingModel || isTranscribing}
             >
-              {isLoadingModel ? <LoaderCircle className="progress-spinner" size={14} /> : <Play size={14} />}
-              <span>{isSelectedRuntimeLoaded ? "Loaded" : isLoadingModel ? "Loading" : "Load"}</span>
+              {isLoadingModel && <LoaderCircle size={14} className="transcribe-spin" aria-hidden="true" />}
+              {isLoadingModel ? "Loading" : "Load with these settings"}
             </button>
-            <button className="m3-btn m3-btn-outlined" onClick={refresh}>
-              <Play size={14} />
-              <span>Refresh</span>
+          )}
+          {status.ready && (
+            <button
+              type="button"
+              className="btn btn-danger transcribe-popover-action"
+              onClick={handleStopRuntime}
+              disabled={isTranscribing}
+            >
+              <Square size={14} aria-hidden="true" />
+              Stop runtime
             </button>
-          </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
+  return (
+    <div className="page transcribe-page">
+      <div className="page-scroll">
+        <div className="page-column">
+          <header className="page-header">
+            <h1 className="page-title">Transcribe</h1>
+            <div className="transcribe-header-actions">
+              {modelPicker}
+              {optionsPopover}
+            </div>
+          </header>
+
+          {status.error && <div className="text-progress error transcribe-notice">{status.error}</div>}
           {installedModels.length === 0 && (
-            <div className="text-progress">
-              Download a Whisper model from Model Manager, Speech Models first.
+            <div className="text-progress transcribe-notice">
+              Download a Whisper model in Models, Speech models, to start transcribing.
             </div>
           )}
-        </section>
-
-        <section className="m3-card speech-panel">
-          <div className="speech-panel-header">
-            <h3>Audio</h3>
-            <span className="status-chip">{audioName || "No audio selected"}</span>
-          </div>
-
-          <div className="speech-capture-zone">
-            <FileAudio size={42} />
-            <div>
-              <strong>{audioName || "Record or upload WAV"}</strong>
-              <p>Microphone recordings are converted to 16 kHz mono PCM16 WAV before transcription.</p>
+          {!status.backendInstalled && installedModels.length > 0 && (
+            <div className="text-progress transcribe-notice">
+              The whisper.cpp backend is not installed. Install it in Models, then refresh.
             </div>
-          </div>
+          )}
 
-          {audioUrl && <audio controls src={audioUrl} style={{ width: "100%" }} />}
-
-          <div className="speech-button-row">
+          <section
+            className={`transcribe-dropzone ${isDragging ? "dragging" : ""} ${isRecording ? "recording" : ""}`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            aria-label="Record or drop an audio file"
+          >
             {isRecording ? (
-              <button className="m3-btn m3-btn-error" onClick={stopRecording}>
-                <Square size={14} />
-                <span>Stop Recording</span>
-              </button>
-            ) : (
-              <button className="m3-btn m3-btn-filled" onClick={startRecording} disabled={isTranscribing}>
-                <Mic size={14} />
-                <span>Record</span>
-              </button>
-            )}
-            <label className="m3-btn m3-btn-outlined">
-              <Upload size={14} />
-              <span>{isConvertingAudio ? "Converting audio..." : "Upload Audio"}</span>
-              <input type="file" accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.ogg,.opus,.flac,.webm,.mp4" onChange={handleUploadAudio} disabled={isConvertingAudio || isTranscribing} hidden />
-            </label>
-            {audioBlob && (
-              <button className="m3-btn m3-btn-error" onClick={clearCurrentAudio} disabled={isTranscribing || isRecording}>
-                <X size={14} />
-                <span>Remove Audio</span>
-              </button>
-            )}
-          </div>
-
-          <div className="speech-button-row">
-            {isTranscribing ? (
-              <button className="m3-btn m3-btn-error" onClick={handleCancel}>
-                <Square size={14} />
-                <span>Cancel</span>
+              <button
+                type="button"
+                className="transcribe-record-btn recording"
+                onClick={stopRecording}
+                aria-label="Stop recording"
+                title="Stop recording"
+              >
+                <Square size={22} fill="currentColor" aria-hidden="true" />
               </button>
             ) : (
               <button
-                className="m3-btn m3-btn-filled"
-                onClick={handleTranscribe}
-                disabled={!audioBlob || !selectedModel || !status.backendInstalled}
+                type="button"
+                className="transcribe-record-btn"
+                onClick={startRecording}
+                disabled={isTranscribing || isConvertingAudio}
+                aria-label="Start recording"
+                title="Start recording"
               >
-                <Mic size={14} />
-                <span>Transcribe</span>
+                <Mic size={28} aria-hidden="true" />
               </button>
             )}
-            {isTranscribing && <span className="text-progress"><LoaderCircle className="progress-spinner" size={14} /> Transcribing locally...</span>}
-          </div>
-        </section>
-      </div>
 
-      <section className="m3-card speech-result-panel">
-        <div className="speech-panel-header">
-          <h3>Transcript</h3>
-          <div className="speech-button-row">
-            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", cursor: "pointer", userSelect: "none", color: "var(--md-sys-color-on-surface-variant)", marginRight: "12px" }}>
-              <input
-                type="checkbox"
-                checked={showTimestamps}
-                onChange={(e) => setShowTimestamps(e.target.checked)}
-                style={{ width: "14px", height: "14px", cursor: "pointer" }}
-              />
-              <span>Show Timestamps</span>
-            </label>
-            <button className="m3-btn m3-btn-outlined" onClick={saveText} disabled={!resultText.trim()}>
-              <Save size={14} />
-              <span>TXT</span>
-            </button>
-            <button className="m3-btn m3-btn-outlined" onClick={saveJson} disabled={!resultText.trim()}>
-              <Save size={14} />
-              <span>JSON</span>
-            </button>
-            {status.ready && (
-              <button className="m3-btn m3-btn-error" onClick={() => stopSpeech().then(refresh)}>
-                <Square size={14} />
-                <span>Stop Runtime</span>
-              </button>
+            {isRecording ? (
+              <div className="transcribe-dropzone-title" aria-live="polite">
+                Recording <span className="transcribe-elapsed">{formatClock(recordingSeconds)}</span>
+              </div>
+            ) : (
+              <div className="transcribe-dropzone-title">
+                {isDragging ? "Drop to add this audio" : "Record, or drop an audio file"}
+              </div>
             )}
-          </div>
+            <div className="transcribe-dropzone-hint">
+              WAV, MP3, M4A, OGG, FLAC or WebM. Audio is converted to 16 kHz mono on this device.
+            </div>
+
+            <div className="transcribe-dropzone-actions">
+              {isConvertingAudio ? (
+                <span className="text-progress" role="status">
+                  <LoaderCircle size={14} className="transcribe-spin" aria-hidden="true" />
+                  Converting audio
+                </span>
+              ) : (
+                <label className={`btn transcribe-upload ${isTranscribing || isRecording ? "disabled" : ""}`}>
+                  <Upload size={15} aria-hidden="true" />
+                  <span>Upload audio</span>
+                  <input
+                    type="file"
+                    className="transcribe-file-input"
+                    accept="audio/*,video/mp4,video/webm,.wav,.mp3,.m4a,.ogg,.opus,.flac,.webm,.mp4"
+                    onChange={handleUploadAudio}
+                    disabled={isConvertingAudio || isTranscribing || isRecording}
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="transcribe-chips">
+              <label
+                className="chat-composer-chip transcribe-select-chip"
+                title={isEnglishOnly ? "This model only understands English" : "Spoken language"}
+              >
+                <Languages size={15} aria-hidden="true" />
+                <span className="transcribe-chip-value" aria-hidden="true">{languageLabel}</span>
+                <ChevronDown size={14} aria-hidden="true" />
+                <select
+                  aria-label="Spoken language"
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value)}
+                  disabled={isTranscribing}
+                >
+                  {LANGUAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </label>
+              <button
+                type="button"
+                className={`chat-composer-chip ${translate ? "active" : ""}`}
+                aria-pressed={translate}
+                onClick={() => setTranslate(!translate)}
+                disabled={isTranscribing}
+              >
+                <ArrowRightLeft size={15} aria-hidden="true" />
+                Translate to English
+              </button>
+            </div>
+          </section>
+
+          {audioBlob && (
+            <div className="row-list transcribe-pending">
+              <div className="row-item">
+                <FileAudio size={20} className="transcribe-pending-icon" aria-hidden="true" />
+                <div className="row-item-main">
+                  <div className="row-item-title">{audioName || "audio.wav"}</div>
+                  <div className="row-item-meta">
+                    {formatClock(audioDuration)}
+                    {isTranscribing && (
+                      <span className="text-progress transcribe-inline-progress" role="status">
+                        <LoaderCircle size={13} className="transcribe-spin" aria-hidden="true" />
+                        {isLoadingModel ? "Loading model" : "Transcribing locally"}
+                      </span>
+                    )}
+                  </div>
+                  {audioUrl && <audio className="transcribe-audio" controls src={audioUrl} />}
+                </div>
+                <div className="row-item-actions">
+                  {isTranscribing ? (
+                    <button type="button" className="btn" onClick={handleCancel}>
+                      <Square size={13} aria-hidden="true" />
+                      Cancel
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="icon-btn danger"
+                        onClick={clearCurrentAudio}
+                        disabled={isRecording}
+                        aria-label="Remove audio"
+                        title="Remove audio"
+                      >
+                        <X size={16} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleTranscribe}
+                        disabled={!audioBlob || !selectedModel || !status.backendInstalled}
+                      >
+                        {transcribedBlob === audioBlob ? "Transcribe again" : "Transcribe"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {result && (
+            <section className="transcribe-result" aria-label="Transcript">
+              <div className="transcribe-result-header">
+                <h2 className="transcribe-result-title" title={transcriptTitle}>{transcriptTitle}</h2>
+                <div className="transcribe-result-actions">
+                  <button
+                    type="button"
+                    className={`chat-composer-chip transcribe-small-chip ${showTimestamps ? "active" : ""}`}
+                    aria-pressed={showTimestamps}
+                    onClick={() => setShowTimestamps(!showTimestamps)}
+                    disabled={!hasSegments}
+                    title={hasSegments ? "Show timestamps" : "This transcript has no timestamps"}
+                  >
+                    <Clock size={14} aria-hidden="true" />
+                    Timestamps
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={copyText}
+                    disabled={!resultText.trim()}
+                    aria-label={copied ? "Copied" : "Copy transcript"}
+                    title={copied ? "Copied" : "Copy transcript"}
+                  >
+                    {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+                  </button>
+                  <button type="button" className="btn" onClick={saveText} disabled={!resultText.trim()}>
+                    <Download size={14} aria-hidden="true" />
+                    TXT
+                  </button>
+                  <button type="button" className="btn" onClick={saveJson} disabled={!resultText.trim()}>
+                    <Download size={14} aria-hidden="true" />
+                    JSON
+                  </button>
+                </div>
+              </div>
+
+              {showTimestamps && hasSegments ? (
+                <ol className="transcribe-segments">
+                  {segments.map((segment, index) => {
+                    const text = String(segment.text || "").trim();
+                    if (!text) return null;
+                    const time = normalizeTimestamp(segment.timestamps);
+                    return (
+                      <li key={index} className="transcribe-segment">
+                        <span className="transcribe-segment-time">{time}</span>
+                        <span className="transcribe-segment-text">{text}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <textarea
+                  className="transcribe-text"
+                  value={resultText}
+                  onChange={(event) => setResultText(event.target.value)}
+                  aria-label="Transcript text"
+                  placeholder="No speech was found in this audio."
+                  spellCheck={false}
+                />
+              )}
+            </section>
+          )}
         </div>
-        <textarea
-          className="m3-textarea speech-result-textarea"
-          value={resultText}
-          onChange={(event) => setResultText(event.target.value)}
-          placeholder="Transcript output will appear here."
-        />
-      </section>
+      </div>
     </div>
   );
 }
