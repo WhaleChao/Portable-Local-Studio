@@ -10,6 +10,30 @@ import TextToSpeech from "./components/TextToSpeech";
 import { cleanupCandidates, formatBytes, getCleanupCandidates, getDiagnostics, getHardwareSpecs, getHealth, getTelemetry, getBackendOptions, getBackendStatus, listGeneratedOutputs, listLlmConversations, saveLlmConversation, deleteLlmConversation, listSpeechTranscriptions, deleteSpeechTranscription, listTtsOutputs, deleteTtsOutput, stopServer } from "./services/api";
 import "./App.css";
 
+// Screens live in the URL hash (#/chat, #/chat/<id>, #/images, ...) so a refresh
+// reopens the same screen and the browser's back/forward buttons work.
+const ROUTE_TO_TAB = {
+  chat: "chat",
+  images: "generator",
+  transcribe: "speech",
+  voice: "tts",
+  models: "models",
+  settings: "settings",
+};
+const TAB_TO_ROUTE = Object.fromEntries(Object.entries(ROUTE_TO_TAB).map(([route, tab]) => [tab, route]));
+
+function readRoute() {
+  const [route, id] = window.location.hash.replace(/^#\/?/, "").split("/");
+  const tab = ROUTE_TO_TAB[route] || "chat";
+  const conversationId = tab === "chat" && id ? decodeURIComponent(id) : null;
+  return { tab, conversationId };
+}
+
+function routeHash(tab, conversationId) {
+  const route = TAB_TO_ROUTE[tab] || "chat";
+  return tab === "chat" && conversationId ? `#/${route}/${encodeURIComponent(conversationId)}` : `#/${route}`;
+}
+
 function App() {
   const dialogResolverRef = useRef(null);
   const [dialog, setDialog] = useState(null);
@@ -48,7 +72,7 @@ function App() {
   }, [theme]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState("generator");
+  const [activeTab, setActiveTab] = useState(() => readRoute().tab);
 
   // Prompts
   const [prompt, setPrompt] = useState("");
@@ -213,7 +237,29 @@ function App() {
 
   // Lifted Chat History States
   const [conversations, setConversations] = useState([]);
-  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [activeConversationId, setActiveConversationId] = useState(() => readRoute().conversationId);
+
+  // Keep the URL in step with the screen; the first sync replaces the entry so the
+  // initial load doesn't add an extra back-button step
+  useEffect(() => {
+    const hash = routeHash(activeTab, activeConversationId);
+    if (window.location.hash === hash) return;
+    if (!window.location.hash) {
+      window.history.replaceState(null, "", hash);
+    } else {
+      window.location.hash = hash;
+    }
+  }, [activeTab, activeConversationId]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const { tab, conversationId } = readRoute();
+      setActiveTab(tab);
+      if (tab === "chat") setActiveConversationId(conversationId);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
   const [sidebarVisible, setSidebarVisible] = useState(() => {
     const saved = localStorage.getItem("sidebarVisible");
     return saved !== "false";
