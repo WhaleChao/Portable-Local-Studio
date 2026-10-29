@@ -214,7 +214,6 @@ function App() {
   // Lifted Chat History States
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false); // Default hide
   const [sidebarVisible, setSidebarVisible] = useState(() => {
     const saved = localStorage.getItem("sidebarVisible");
     return saved !== "false";
@@ -235,10 +234,8 @@ function App() {
   }, [fontSize]);
   const [speechTranscriptions, setSpeechTranscriptions] = useState([]);
   const [selectedSpeechTranscript, setSelectedSpeechTranscript] = useState(null);
-  const [showSpeechHistory, setShowSpeechHistory] = useState(false);
   const [ttsOutputs, setTtsOutputs] = useState([]);
   const [selectedTtsOutput, setSelectedTtsOutput] = useState(null);
-  const [showTtsHistory, setShowTtsHistory] = useState(false);
 
   const sanitizeMessageForStorage = (message) => {
     if (!Array.isArray(message?.content)) return message;
@@ -677,32 +674,36 @@ function App() {
 
   // Tab contents are kept mounted to preserve loading/generation state when switching tabs
 
+  const handleNewChat = useCallback(() => {
+    setActiveConversationId(null);
+    setActiveTab("chat");
+  }, []);
+
+  const toggleSidebar = useCallback(() => setSidebarVisible((visible) => !visible), []);
+
   const sidebarContent = useMemo(() => (
     <Sidebar
       collapsed={!sidebarVisible}
+      onToggleSidebar={toggleSidebar}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       specs={specs}
+      telemetry={telemetry}
+      onNewChat={handleNewChat}
       conversations={conversations}
       activeConversationId={activeConversationId}
       setActiveConversationId={setActiveConversationId}
-      showHistory={showHistory}
-      setShowHistory={setShowHistory}
       onDeleteConversation={handleDeleteConversation}
       speechTranscriptions={speechTranscriptions}
       selectedSpeechTranscript={selectedSpeechTranscript}
       setSelectedSpeechTranscript={setSelectedSpeechTranscript}
-      showSpeechHistory={showSpeechHistory}
-      setShowSpeechHistory={setShowSpeechHistory}
       onDeleteSpeechTranscription={handleDeleteSpeechTranscription}
       ttsOutputs={ttsOutputs}
       selectedTtsOutput={selectedTtsOutput}
       setSelectedTtsOutput={setSelectedTtsOutput}
-      showTtsHistory={showTtsHistory}
-      setShowTtsHistory={setShowTtsHistory}
       onDeleteTtsOutput={handleDeleteTtsOutput}
     />
-  ), [sidebarVisible, activeTab, specs, conversations, activeConversationId, showHistory, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, showSpeechHistory, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, showTtsHistory, handleDeleteTtsOutput]);
+  ), [sidebarVisible, toggleSidebar, activeTab, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, handleDeleteTtsOutput]);
 
   const handleStopServer = useCallback(async () => {
     if (!serverRunning || isStoppingServer) return;
@@ -728,7 +729,6 @@ function App() {
       <div className="main-content">
         {/* Top telemetry specs chips bar */}
         <TopStatusBar
-          telemetry={telemetry}
           serverRunning={serverRunning}
           activeModel={activeModel}
           isLlmLoaded={isLlmLoaded}
@@ -737,7 +737,7 @@ function App() {
           theme={theme}
           setTheme={setTheme}
           sidebarVisible={sidebarVisible}
-          onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
+          onToggleSidebar={toggleSidebar}
         />
 
         {/* Dynamic Workspace Container */}
@@ -795,8 +795,6 @@ function App() {
             setConversations={setConversations}
             activeConversationId={activeConversationId}
             setActiveConversationId={setActiveConversationId}
-            showHistory={showHistory}
-            setShowHistory={setShowHistory}
             saveConversationState={saveConversationState}
             setIsLlmLoaded={setIsLlmLoaded}
           />

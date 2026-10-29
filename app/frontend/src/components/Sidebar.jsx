@@ -1,478 +1,219 @@
-import React, { memo } from "react";
-import { Image, FolderDown, MessageSquare, Mic, Settings, Shield, Terminal, ChevronDown, ChevronUp, Trash2, Volume2 } from "lucide-react";
+import React, { memo, useMemo } from "react";
+import { Image, Box, MessageSquare, Mic, Settings, Shield, Trash2, Volume2, SquarePen, PanelLeftClose, Cpu } from "lucide-react";
 
-function formatSidebarDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const dateStr = date.toLocaleDateString();
-  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-  return `${dateStr} ${timeStr}`;
+function formatGb(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "--";
+  return number.toFixed(number >= 10 ? 0 : 1);
 }
 
-function Sidebar({ 
+function toTime(value) {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+// Lets div-based rows respond to Enter/Space like real buttons (ignores keys from nested buttons)
+function activateOnKey(e) {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    e.currentTarget.click();
+  }
+}
+
+const RECENT_ICONS = { chat: MessageSquare, speech: Mic, tts: Volume2 };
+
+function Sidebar({
   collapsed = false,
-  activeTab, 
-  setActiveTab, 
+  onToggleSidebar,
+  activeTab,
+  setActiveTab,
   specs,
+  telemetry,
+  onNewChat,
   conversations = [],
   activeConversationId,
   setActiveConversationId,
-  showHistory,
-  setShowHistory,
   onDeleteConversation,
   speechTranscriptions = [],
   selectedSpeechTranscript,
   setSelectedSpeechTranscript,
-  showSpeechHistory,
-  setShowSpeechHistory,
   onDeleteSpeechTranscription,
   ttsOutputs = [],
   selectedTtsOutput,
   setSelectedTtsOutput,
-  showTtsHistory,
-  setShowTtsHistory,
   onDeleteTtsOutput
 }) {
-  // Lets div-based rows respond to Enter/Space like real buttons (ignores keys from nested buttons)
-  const activateOnKey = (e) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      e.currentTarget.click();
-    }
-  };
+  // One list for chats, transcriptions and voice clips, newest first
+  const recents = useMemo(() => {
+    const speechId = (item) => item && (item.filename || item.metadata || item.textFile);
+    const ttsId = (item) => item && (item.filename || item.metadata || item.audioFile);
 
-  const navItemProps = (tab) => ({
-    className: `nav-item ${activeTab === tab ? "active" : ""}`,
-    role: "button",
-    tabIndex: 0,
-    "aria-current": activeTab === tab ? "page" : undefined,
-    onClick: () => setActiveTab(tab),
-    onKeyDown: activateOnKey,
-  });
+    const chats = conversations.map((conv) => ({
+      key: `chat:${conv.id}`,
+      type: "chat",
+      title: conv.title || "Chat",
+      time: toTime(conv.timestamp),
+      isActive: activeTab === "chat" && activeConversationId === conv.id,
+      open: () => {
+        setActiveConversationId(conv.id);
+        setActiveTab("chat");
+      },
+      remove: (e) => onDeleteConversation(conv.id, e),
+      deleteLabel: "Delete chat",
+    }));
+
+    const speech = speechTranscriptions.map((item) => ({
+      key: `speech:${speechId(item)}`,
+      type: "speech",
+      title: item.displayName || item.sourceFilename || item.textFile || item.filename || "Transcript",
+      time: toTime(item.modifiedAt || item.createdAt),
+      isActive: activeTab === "speech" && speechId(selectedSpeechTranscript) === speechId(item),
+      open: () => {
+        setSelectedSpeechTranscript(item);
+        setActiveTab("speech");
+      },
+      remove: (e) => onDeleteSpeechTranscription?.(item, e),
+      deleteLabel: "Delete transcription",
+    }));
+
+    const voice = ttsOutputs.map((item) => ({
+      key: `tts:${ttsId(item)}`,
+      type: "tts",
+      title: item.displayName || item.text || item.audioFile || item.filename || "Voice clip",
+      time: toTime(item.modifiedAt || item.createdAt),
+      isActive: activeTab === "tts" && ttsId(selectedTtsOutput) === ttsId(item),
+      open: () => {
+        setSelectedTtsOutput(item);
+        setActiveTab("tts");
+      },
+      remove: (e) => onDeleteTtsOutput?.(item, e),
+      deleteLabel: "Delete voice clip",
+    }));
+
+    return [...chats, ...speech, ...voice].sort((a, b) => b.time - a.time);
+  }, [
+    conversations, speechTranscriptions, ttsOutputs, activeTab, activeConversationId,
+    selectedSpeechTranscript, selectedTtsOutput, setActiveTab, setActiveConversationId,
+    setSelectedSpeechTranscript, setSelectedTtsOutput, onDeleteConversation,
+    onDeleteSpeechTranscription, onDeleteTtsOutput
+  ]);
+
+  const navItems = [
+    { tab: "generator", label: "Images", Icon: Image },
+    { tab: "speech", label: "Transcribe", Icon: Mic },
+    { tab: "tts", label: "Voice", Icon: Volume2 },
+    { tab: "models", label: "Models", Icon: Box },
+  ];
+
+  const isNewChatActive = activeTab === "chat" && !activeConversationId;
+  const deviceName = specs.gpu_name && !specs.gpu_name.startsWith("Loading") ? specs.gpu_name : specs.cpu_name;
+  const cpuUsage = Number(telemetry?.cpu_usage);
 
   return (
-    <div className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <div>
-        {/* Sidebar Header */}
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      <div className="sidebar-header">
         <div className="sidebar-logo">
-          <Shield className="sidebar-logo-icon" />
+          <Shield className="sidebar-logo-icon" aria-hidden="true" />
           <span className="sidebar-logo-text">Local AI Studio</span>
         </div>
-
-        {/* Sidebar Navigation Links (Material 3 style) */}
-        <div className="nav-list">
-          <div
-            {...navItemProps("generator")}
-          >
-            <Image size={20} />
-            <span>Image Generator</span>
-          </div>
-
-          <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              {...navItemProps("chat")}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <MessageSquare size={20} />
-                <span>Text Chat</span>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowHistory(!showHistory);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "inherit",
-                  cursor: "pointer",
-                  padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: "50%",
-                  transition: "background-color 0.2s"
-                }}
-                className="history-toggle-arrow"
-                title={showHistory ? "Hide Chat History" : "Show Chat History"}
-                aria-expanded={showHistory}
-              >
-                {showHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-
-            {/* Sidebar Chat History List */}
-            {showHistory && (
-              <div 
-                className="sidebar-history-list" 
-                style={{ 
-                  paddingLeft: "14px", 
-                  marginTop: "6px", 
-                  marginBottom: "6px",
-                  display: "flex", 
-                  flexDirection: "column", 
-                  gap: "4px", 
-                  maxHeight: "220px", 
-                  overflowY: "auto",
-                  borderLeft: "2px solid var(--border-color)"
-                }}
-              >
-                {conversations.length === 0 ? (
-                  <div style={{ padding: "8px 12px", fontSize: "0.78rem", color: "var(--md-sys-color-outline)", opacity: 0.8 }}>
-                    No saved chats
-                  </div>
-                ) : (
-                  conversations.map((conv) => {
-                    const isActive = activeConversationId === conv.id;
-                    return (
-                      <div
-                        key={conv.id}
-                        onClick={() => {
-                          setActiveConversationId(conv.id);
-                          setActiveTab("chat");
-                        }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "6px 8px 6px 10px",
-                          borderRadius: "var(--md-shape-corner-small)",
-                          fontSize: "0.78rem",
-                          cursor: "pointer",
-                          background: isActive ? "var(--md-sys-color-secondary-container)" : "transparent",
-                          color: isActive ? "var(--md-sys-color-on-secondary-container)" : "var(--md-sys-color-on-surface-variant)",
-                          border: isActive ? "1px solid var(--md-sys-color-outline-variant)" : "1px solid transparent",
-                          transition: "background 0.2s"
-                        }}
-                        className="sidebar-history-item"
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={activateOnKey}
-                        title={conv.title}
-                      >
-                        <span style={{
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          flex: 1,
-                          fontWeight: isActive ? 600 : 400
-                        }}>
-                          {conv.title}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteConversation(conv.id, e);
-                          }}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "var(--md-sys-color-outline)",
-                            cursor: "pointer",
-                            padding: "2px",
-                            marginLeft: "6px",
-                            display: "flex",
-                            alignItems: "center"
-                          }}
-                          className="sidebar-history-delete"
-                          title="Delete Conversation"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              {...navItemProps("speech")}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <Mic size={20} />
-                <span>Speech Transcriber</span>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSpeechHistory(!showSpeechHistory);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "inherit",
-                  cursor: "pointer",
-                  padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: "50%",
-                  transition: "background-color 0.2s"
-                }}
-                className="history-toggle-arrow"
-                title={showSpeechHistory ? "Hide Transcriptions" : "Show Transcriptions"}
-                aria-expanded={showSpeechHistory}
-              >
-                {showSpeechHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-
-            {showSpeechHistory && (
-              <div
-                className="sidebar-history-list"
-                style={{
-                  paddingLeft: "14px",
-                  marginTop: "6px",
-                  marginBottom: "6px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  borderLeft: "2px solid var(--border-color)"
-                }}
-              >
-                {speechTranscriptions.length === 0 ? (
-                  <div style={{ padding: "8px 12px", fontSize: "0.78rem", color: "var(--md-sys-color-outline)", opacity: 0.8 }}>
-                    No saved transcriptions
-                  </div>
-                ) : (
-                  speechTranscriptions.map((item) => {
-                    const itemId = item.filename || item.metadata || item.textFile;
-                    const isActive = selectedSpeechTranscript && (selectedSpeechTranscript.filename || selectedSpeechTranscript.metadata || selectedSpeechTranscript.textFile) === itemId;
-                    const title = item.displayName || item.sourceFilename || item.textFile || item.filename || "Transcript";
-                    const date = formatSidebarDate(item.modifiedAt || item.createdAt);
-                    return (
-                      <div
-                        key={itemId}
-                        onClick={() => {
-                          setSelectedSpeechTranscript(item);
-                          setActiveTab("speech");
-                        }}
-                        style={{
-                          display: "flex",
-                          flexDirection: "row",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "7px 8px 7px 10px",
-                          borderRadius: "var(--md-shape-corner-small)",
-                          fontSize: "0.78rem",
-                          cursor: "pointer",
-                          background: isActive ? "var(--md-sys-color-secondary-container)" : "transparent",
-                          color: isActive ? "var(--md-sys-color-on-secondary-container)" : "var(--md-sys-color-on-surface-variant)",
-                          border: isActive ? "1px solid var(--md-sys-color-outline-variant)" : "1px solid transparent",
-                          transition: "background 0.2s"
-                        }}
-                        className="sidebar-history-item"
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={activateOnKey}
-                        title={title}
-                      >
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: isActive ? 600 : 400 }}>
-                            {title}
-                          </span>
-                          {date && (
-                            <span style={{ fontSize: "0.75rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {date}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteSpeechTranscription?.(item, e);
-                          }}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "var(--md-sys-color-outline)",
-                            cursor: "pointer",
-                            padding: "2px",
-                            marginLeft: "6px",
-                            display: "flex",
-                            alignItems: "center"
-                          }}
-                          className="sidebar-history-delete"
-                          title="Delete Transcription"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              {...navItemProps("tts")}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <Volume2 size={20} />
-                <span>Text to Speech</span>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowTtsHistory(!showTtsHistory);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "inherit",
-                  cursor: "pointer",
-                  padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: "50%",
-                  transition: "background-color 0.2s"
-                }}
-                className="history-toggle-arrow"
-                title={showTtsHistory ? "Hide TTS Outputs" : "Show TTS Outputs"}
-                aria-expanded={showTtsHistory}
-              >
-                {showTtsHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-
-            {showTtsHistory && (
-              <div
-                className="sidebar-history-list"
-                style={{
-                  paddingLeft: "14px",
-                  marginTop: "6px",
-                  marginBottom: "6px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  borderLeft: "2px solid var(--border-color)"
-                }}
-              >
-                {ttsOutputs.length === 0 ? (
-                  <div style={{ padding: "8px 12px", fontSize: "0.78rem", color: "var(--md-sys-color-outline)", opacity: 0.8 }}>
-                    No saved audio
-                  </div>
-                ) : (
-                  ttsOutputs.map((item) => {
-                    const itemId = item.filename || item.metadata || item.audioFile;
-                    const isActive = selectedTtsOutput && (selectedTtsOutput.filename || selectedTtsOutput.metadata || selectedTtsOutput.audioFile) === itemId;
-                    const title = item.displayName || item.text || item.audioFile || item.filename || "TTS Output";
-                    const date = formatSidebarDate(item.modifiedAt || item.createdAt);
-                    return (
-                      <div
-                        key={itemId}
-                        onClick={() => {
-                          setSelectedTtsOutput(item);
-                          setActiveTab("tts");
-                        }}
-                        style={{
-                          display: "flex",
-                          flexDirection: "row",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "7px 8px 7px 10px",
-                          borderRadius: "var(--md-shape-corner-small)",
-                          fontSize: "0.78rem",
-                          cursor: "pointer",
-                          background: isActive ? "var(--md-sys-color-secondary-container)" : "transparent",
-                          color: isActive ? "var(--md-sys-color-on-secondary-container)" : "var(--md-sys-color-on-surface-variant)",
-                          border: isActive ? "1px solid var(--md-sys-color-outline-variant)" : "1px solid transparent",
-                          transition: "background 0.2s"
-                        }}
-                        className="sidebar-history-item"
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={activateOnKey}
-                        title={title}
-                      >
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: isActive ? 600 : 400 }}>
-                            {title}
-                          </span>
-                          {date && (
-                            <span style={{ fontSize: "0.75rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {date}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteTtsOutput?.(item, e);
-                          }}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "var(--md-sys-color-outline)",
-                            cursor: "pointer",
-                            padding: "2px",
-                            marginLeft: "6px",
-                            display: "flex",
-                            alignItems: "center"
-                          }}
-                          className="sidebar-history-delete"
-                          title="Delete TTS Output"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          <div
-            {...navItemProps("models")}
-          >
-            <FolderDown size={20} />
-            <span>Model Manager</span>
-          </div>
-
-          <div
-            {...navItemProps("settings")}
-          >
-            <Settings size={20} />
-            <span>Settings</span>
-          </div>
-        </div>
+        <button type="button" className="sidebar-icon-btn" onClick={onToggleSidebar} aria-label="Close sidebar" title="Close sidebar">
+          <PanelLeftClose size={18} />
+        </button>
       </div>
 
-      {/* Sidebar Footer with Host Telemetry System Specs */}
-      <div className="sidebar-footer">
-        <div className="sidebar-specs-header">
-          <Terminal size={12} />
-          <span>Host Specifications</span>
+      <nav className="nav-list" aria-label="Main">
+        <div
+          className={`nav-item ${isNewChatActive ? "active" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-current={isNewChatActive ? "page" : undefined}
+          onClick={onNewChat}
+          onKeyDown={activateOnKey}
+        >
+          <SquarePen size={18} aria-hidden="true" />
+          <span>New chat</span>
         </div>
-        <div className="sidebar-specs-item" title={specs.cpu_name}>
-          CPU: {specs.cpu_name}
-        </div>
-        <div className="sidebar-specs-item" title={specs.gpu_name}>
-          GPU: {specs.gpu_name}
-        </div>
-        <div className="sidebar-specs-item">
-          Memory: {specs.ram_total_gb.toFixed(0)} GB RAM ({specs.cpu_cores_physical} Cores)
-        </div>
-        <div className="sidebar-specs-os">
-          OS: {specs.os_name}
-        </div>
+        {navItems.map(({ tab, label, Icon }) => (
+          <div
+            key={tab}
+            className={`nav-item ${activeTab === tab ? "active" : ""}`}
+            role="button"
+            tabIndex={0}
+            aria-current={activeTab === tab ? "page" : undefined}
+            onClick={() => setActiveTab(tab)}
+            onKeyDown={activateOnKey}
+          >
+            <Icon size={18} aria-hidden="true" />
+            <span>{label}</span>
+          </div>
+        ))}
+      </nav>
+
+      <div className="sidebar-recents">
+        <div className="sidebar-section-label" id="sidebar-recents-label">Recents</div>
+        {recents.length === 0 ? (
+          <div className="sidebar-recents-empty">Your chats, transcriptions and voice clips show up here.</div>
+        ) : (
+          <ul className="sidebar-recents-list" aria-labelledby="sidebar-recents-label">
+            {recents.map((item) => {
+              const Icon = RECENT_ICONS[item.type];
+              return (
+                <li key={item.key}>
+                  <div
+                    className={`sidebar-history-item ${item.isActive ? "active" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-current={item.isActive ? "page" : undefined}
+                    onClick={item.open}
+                    onKeyDown={activateOnKey}
+                    title={item.title}
+                  >
+                    <Icon size={14} className="sidebar-history-icon" aria-hidden="true" />
+                    <span className="sidebar-history-title">{item.title}</span>
+                    <button
+                      type="button"
+                      className="sidebar-history-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        item.remove(e);
+                      }}
+                      aria-label={`${item.deleteLabel}: ${item.title}`}
+                      title={item.deleteLabel}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
-    </div>
+
+      <div className="sidebar-device">
+        <div className="sidebar-device-icon" aria-hidden="true">
+          <Cpu size={16} />
+        </div>
+        <div className="sidebar-device-info" title={`${specs.cpu_name} · ${specs.gpu_name} · ${specs.os_name}`}>
+          <div className="sidebar-device-name">{deviceName}</div>
+          <div className="sidebar-device-stats">
+            Offline · RAM {formatGb(telemetry?.ram_used_gb)}/{formatGb(telemetry?.ram_total_gb || specs.ram_total_gb)} GB
+            {Number.isFinite(cpuUsage) ? ` · CPU ${Math.round(cpuUsage)}%` : ""}
+          </div>
+        </div>
+        <button
+          type="button"
+          className={`sidebar-icon-btn ${activeTab === "settings" ? "active" : ""}`}
+          onClick={() => setActiveTab("settings")}
+          aria-label="Settings"
+          aria-current={activeTab === "settings" ? "page" : undefined}
+          title="Settings"
+        >
+          <Settings size={18} />
+        </button>
+      </div>
+    </aside>
   );
 }
 

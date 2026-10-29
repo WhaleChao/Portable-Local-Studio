@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown, Globe2, Plus, PenLine, Lightbulb, Bug, ListChecks, Zap, FileText } from "lucide-react";
+import { Bot, LoaderCircle, Send, Trash2, Square, Paperclip, X, ChevronDown, Globe2, Plus, PenLine, Lightbulb, Bug, ListChecks, Zap, FileText } from "lucide-react";
 import {
   getDownloadProgress,
   getLlmStatus,
@@ -121,8 +121,6 @@ function TextChat({
   setConversations,
   activeConversationId,
   setActiveConversationId,
-  showHistory,
-  setShowHistory,
   saveConversationState,
   setIsLlmLoaded
 }) {
@@ -874,21 +872,6 @@ function TextChat({
         {/* ─── Header ─────────────────────────────────────────── */}
         <div className="text-chat-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flex: 1 }}>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="m3-btn m3-btn-tonal"
-              style={{
-                height: "34px", width: "34px", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: "var(--md-shape-corner-medium)", cursor: "pointer",
-                background: showHistory ? "var(--md-sys-color-primary-container)" : "var(--md-sys-color-surface-variant)",
-                color: showHistory ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface)",
-                border: "1px solid var(--border-color)", flexShrink: 0
-              }}
-              title="Toggle Chat History"
-            >
-              <History size={17} />
-            </button>
 
             <button
               onClick={handleNewChat}

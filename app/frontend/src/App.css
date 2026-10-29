@@ -36,6 +36,7 @@
   --md-sys-color-surface-variant: #f0f0f3;
   --md-sys-color-on-surface-variant: #424245;
   --sidebar-bg: #ebebee;
+  --sidebar-active: #ffffff;
 
   /* Text description variables (both pass 4.5:1 on canvas and on cards) */
   --md-sys-color-outline: #636366;            /* Used for description texts in JSX */
@@ -58,39 +59,40 @@ html {
   font-size: var(--app-font-size);
 }
 
-/* Clean Dark */
+/* Clean Dark: neutral near-black, white primary actions */
 html[data-theme="dark"] {
   color-scheme: dark;
-  --md-sys-color-primary: #409cff;
-  --md-sys-color-on-primary: #001a33;
-  --md-sys-color-primary-container: rgba(64, 156, 255, 0.16);
-  --md-sys-color-on-primary-container: #8cc4ff;
-  --md-sys-color-secondary: #409cff;
-  --md-sys-color-on-secondary: #001a33;
-  --md-sys-color-secondary-container: rgba(64, 156, 255, 0.16);
-  --md-sys-color-on-secondary-container: #8cc4ff;
-  --md-sys-color-tertiary: #409cff;
-  --md-sys-color-on-tertiary: #001a33;
-  --md-sys-color-background: #161618;
-  --md-sys-color-on-background: #f5f5f7;
-  --md-sys-color-surface: #232325;
-  --md-sys-color-on-surface: #f5f5f7;
-  --md-sys-color-surface-variant: #2c2c2e;
-  --md-sys-color-on-surface-variant: #c7c7cc;
-  --sidebar-bg: #1c1c1e;
+  --md-sys-color-primary: #f4f4f4;
+  --md-sys-color-on-primary: #0d0d0d;
+  --md-sys-color-primary-container: rgba(255, 255, 255, 0.07);
+  --md-sys-color-on-primary-container: #f4f4f4;
+  --md-sys-color-secondary: #f4f4f4;
+  --md-sys-color-on-secondary: #0d0d0d;
+  --md-sys-color-secondary-container: rgba(255, 255, 255, 0.07);
+  --md-sys-color-on-secondary-container: #f4f4f4;
+  --md-sys-color-tertiary: #f4f4f4;
+  --md-sys-color-on-tertiary: #0d0d0d;
+  --md-sys-color-background: #0d0d0d;
+  --md-sys-color-on-background: #ececec;
+  --md-sys-color-surface: #1a1a1a;
+  --md-sys-color-on-surface: #ececec;
+  --md-sys-color-surface-variant: #262626;
+  --md-sys-color-on-surface-variant: #b4b4b4;
+  --sidebar-bg: #171717;
+  --sidebar-active: #262626;
 
-  /* Text description variables (both pass 4.5:1 on canvas and on cards) */
-  --md-sys-color-outline: #98989d;            /* Used for description texts in JSX */
-  --md-sys-color-outline-variant: #98989d;    /* Used for sub-description texts in JSX */
+  /* Text description variables (both pass 4.5:1 on canvas, cards and inputs) */
+  --md-sys-color-outline: #a3a3a3;            /* Used for description texts in JSX */
+  --md-sys-color-outline-variant: #939393;    /* Used for sub-description texts in JSX */
 
   /* Border variables */
   --border-color: rgba(255, 255, 255, 0.1);
   --border-color-muted: rgba(255, 255, 255, 0.06);
 
-  --md-sys-color-error: #ff453a;
-  --md-sys-color-on-error: #ffffff;
-  --md-sys-color-success: #30d158;
-  --md-sys-color-on-success: #0b1f10;
+  --md-sys-color-error: #ff6b61;
+  --md-sys-color-on-error: #0d0d0d;
+  --md-sys-color-success: #4ade80;
+  --md-sys-color-on-success: #0d0d0d;
   --md-sys-color-card-border: rgba(255, 255, 255, 0.08);
   --glass-shadow: none;
   --glass-blur: none;
@@ -496,16 +498,6 @@ body {
   display: none;
 }
 
-.sidebar-footer {
-  padding: 18px 12px 0 12px;
-  border-top: 1px solid var(--border-color);
-  font-size: 0.78rem;
-  color: var(--md-sys-color-on-surface-variant);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  opacity: 0.95;
-}
 
 /* Main Content Panel */
 .main-content {
@@ -1440,24 +1432,7 @@ body {
   gap: 8px;
 }
 
-.telemetry-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background-color: var(--md-sys-color-surface-variant);
-  border: 1px solid var(--border-color);
-  border-radius: var(--md-shape-corner-medium);
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--md-sys-color-on-surface-variant);
-  transition: all var(--md-transition-duration);
-}
 
-.telemetry-chip-icon {
-  width: 14px;
-  height: 14px;
-}
 
 .readiness-card {
   margin: 0 0 18px 0;
@@ -2649,29 +2624,8 @@ html[data-theme^="dark"] .m3-segment-item:hover:not(.active):not(.disabled) {
 }
 
 /* Sidebar specs classes */
-.sidebar-specs-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-background);
-}
 
-.sidebar-specs-item {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-  opacity: 0.85;
-  margin-bottom: 2px;
-  color: var(--md-sys-color-on-background);
-}
 
-.sidebar-specs-os {
-  color: var(--md-sys-color-primary);
-  font-weight: 600;
-  margin-top: 4px;
-}
 
 /* Chat History Sidebar styling */
 .chat-history-sidebar {
@@ -2843,29 +2797,8 @@ html[data-theme^="dark"] .m3-segment-item:hover:not(.active):not(.disabled) {
 }
 
 /* Sidebar specs classes */
-.sidebar-specs-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-background);
-}
 
-.sidebar-specs-item {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-  opacity: 0.85;
-  margin-bottom: 2px;
-  color: var(--md-sys-color-on-background);
-}
 
-.sidebar-specs-os {
-  color: var(--md-sys-color-primary);
-  font-weight: 600;
-  margin-top: 4px;
-}
 
 /* Chat History Sidebar styling */
 .chat-history-sidebar {
@@ -3739,10 +3672,6 @@ html[data-theme^="dark"] .settings-subsection:hover {
   justify-content: center;
 }
 
-.history-toggle-arrow {
-  min-width: 28px;
-  min-height: 28px;
-}
 
 .sidebar-history-delete:hover {
   color: var(--md-sys-color-error) !important;
@@ -3817,9 +3746,10 @@ html[data-theme^="dark"] .settings-subsection:hover {
 
 /* ---- Clean Light: shared behavior ---- */
 
-/* --sidebar-bg is only tuned for the two Clean themes; every other theme keeps its own surface */
+/* --sidebar-bg and --sidebar-active are only tuned for the two Clean themes; every other theme keeps its own surface */
 html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   --sidebar-bg: var(--md-sys-color-surface);
+  --sidebar-active: var(--md-sys-color-primary-container);
 }
 
 .sidebar {
@@ -3830,16 +3760,230 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   border-radius: var(--md-shape-corner-full);
 }
 
-.telemetry-chip,
 .current-model-info {
   white-space: nowrap;
 }
 
-/* Narrow windows: keep CPU and RAM, drop the VRAM chip so the bar stays on one line */
-@media (max-width: 900px) {
-  .telemetry-chip ~ .telemetry-chip ~ .telemetry-chip {
-    display: none;
-  }
+/* ---- Sidebar (chat-app layout: nav, Recents, device footer) ---- */
+.sidebar {
+  width: 260px;
+  padding: 12px 10px;
+  gap: 2px;
+  justify-content: flex-start;
+  box-shadow: none;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 12px 8px;
+}
+
+.sidebar .sidebar-logo {
+  padding: 0;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar .sidebar-logo-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.sidebar .sidebar-logo-text {
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.sidebar-icon-btn {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--md-shape-corner-small);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  transition: background-color var(--md-transition-duration) var(--md-transition-easing);
+}
+
+.sidebar-icon-btn:hover,
+.sidebar-icon-btn.active {
+  background: var(--sidebar-active, var(--md-sys-color-primary-container));
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar .nav-list {
+  gap: 1px;
+  margin-bottom: 0;
+}
+
+.sidebar .nav-item {
+  height: 38px;
+  padding: 0 10px;
+  gap: 10px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  border-radius: var(--md-shape-corner-small);
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar .nav-item.active {
+  background-color: var(--sidebar-active, var(--md-sys-color-primary-container));
+  box-shadow: none;
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-recents {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 16px;
+}
+
+.sidebar-section-label {
+  padding: 4px 10px 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--md-sys-color-outline);
+}
+
+.sidebar-recents-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-recents-empty {
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  color: var(--md-sys-color-outline);
+}
+
+.sidebar-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 4px 0 10px;
+  border-radius: var(--md-shape-corner-small);
+  font-size: 0.88rem;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  transition: background-color var(--md-transition-duration) var(--md-transition-easing);
+}
+
+.sidebar-history-item:hover {
+  background: var(--md-sys-color-primary-container);
+}
+
+.sidebar-history-item.active {
+  background: var(--sidebar-active, var(--md-sys-color-primary-container));
+  font-weight: 500;
+}
+
+.sidebar-history-icon {
+  flex-shrink: 0;
+  color: var(--md-sys-color-outline);
+}
+
+.sidebar-history-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar .sidebar-history-delete {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--md-sys-color-outline);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.sidebar-history-item.active .sidebar-history-delete {
+  opacity: 0.8;
+}
+
+.sidebar-device {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 2px 2px 4px;
+  border-top: 1px solid var(--border-color-muted);
+}
+
+.sidebar-device-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--sidebar-active, var(--md-sys-color-primary-container));
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-device-info {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.sidebar-device-name,
+.sidebar-device-stats {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-device-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-device-stats {
+  font-size: 0.75rem;
+  color: var(--md-sys-color-outline);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Top bar: quiet strip with status pill and theme controls ---- */
+.top-status-bar {
+  height: 56px;
+  background: transparent;
+  border-bottom: none;
+  box-shadow: none;
+  padding: 0 20px;
+}
+
+.status-pill {
+  gap: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--md-shape-corner-full);
+  font-size: 0.85rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.status-pill-model {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--md-sys-color-on-surface);
+  font-weight: 500;
 }
 html[data-theme^="dark"] {
   color-scheme: dark;
