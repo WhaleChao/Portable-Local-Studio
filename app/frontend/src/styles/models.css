@@ -1,0 +1,383 @@
+/* Models screen (ModelManager.jsx). Builds on the shared page blocks in App.css. */
+
+.models-header {
+  align-items: flex-start;
+}
+
+.models-search {
+  width: 260px;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.models-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.models-search-clear {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-sys-color-outline);
+  cursor: pointer;
+}
+
+.models-search-clear:hover {
+  background: var(--sidebar-hover);
+  color: var(--md-sys-color-on-surface);
+}
+
+.models-tabs {
+  margin-bottom: 8px;
+}
+
+.models-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.models-count {
+  color: var(--md-sys-color-outline);
+  font-weight: 400;
+}
+
+.models-standalone {
+  margin-bottom: 8px;
+}
+
+/* Rows that stack extra content (progress, notes) under the main line */
+.models-stack-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.models-row-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.models-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.models-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.models-desc {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* Quiet link-style action (View on Hugging Face, Clear filters) */
+.models-link-btn {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.models-link-btn:hover {
+  background: var(--sidebar-hover);
+  color: var(--md-sys-color-on-surface);
+  text-decoration: underline;
+}
+
+/* Inline progress (load, unload, download, import) */
+.models-inline-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color-muted);
+}
+
+.models-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.models-progress-phase {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-progress-bar {
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--sidebar-active, var(--border-color));
+  overflow: hidden;
+}
+
+.models-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--md-sys-color-on-surface);
+  transition: width 0.2s ease;
+}
+
+.models-progress-bar.danger .models-progress-fill {
+  background: var(--md-sys-color-error);
+}
+
+.models-progress-detail {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--md-sys-color-outline);
+}
+
+.models-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.models-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.models-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Scanning / searching status */
+.models-scanning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 0;
+  font-size: 0.88rem;
+  color: var(--md-sys-color-outline);
+}
+
+.models-scanning-inline {
+  justify-content: flex-start;
+  padding: 0;
+}
+
+.models-spin {
+  flex-shrink: 0;
+  animation: models-spin 0.9s linear infinite;
+}
+
+@keyframes models-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .models-spin {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Add a model: URL + import */
+.models-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.models-url-form {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.models-url-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.models-file-input {
+  display: none;
+}
+
+.models-add-hint {
+  margin: 6px 0 0;
+}
+
+/* Library */
+.models-library-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.models-filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.models-filter-chip {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.models-filter-chip:hover {
+  background: var(--sidebar-hover);
+}
+
+.models-filter-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--sidebar-active);
+  color: var(--md-sys-color-on-surface);
+  font-weight: 500;
+}
+
+.models-warning {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--md-sys-color-error);
+}
+
+.models-group + .models-group {
+  margin-top: 16px;
+}
+
+.models-group-label {
+  margin: 0 0 6px 2px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--md-sys-color-outline);
+}
+
+.models-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+/* Dialogs (another model loaded, GPU memory warning) */
+.models-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.models-dialog {
+  width: 100%;
+  max-width: 460px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.models-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.models-dialog-title svg {
+  color: var(--md-sys-color-error);
+}
+
+.models-dialog-body {
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.models-dialog-body strong {
+  color: var(--md-sys-color-on-surface);
+  font-weight: 600;
+}
+
+.models-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (max-width: 720px) {
+  .models-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .models-search {
+    width: 100%;
+  }
+
+  .models-row-top,
+  .models-add-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .models-row-top .row-item-actions {
+    flex-wrap: wrap;
+  }
+}
