@@ -681,6 +681,10 @@ function App() {
 
   const toggleSidebar = useCallback(() => setSidebarVisible((visible) => !visible), []);
 
+  // The top bar only shows outside a running conversation, so chats get the full height
+  const [chatInThread, setChatInThread] = useState(false);
+  const showTopBar = !(activeTab === "chat" && chatInThread);
+
   const sidebarContent = useMemo(() => (
     <Sidebar
       collapsed={!sidebarVisible}
@@ -728,6 +732,7 @@ function App() {
       {/* Main Panel */}
       <div className="main-content">
         {/* Top telemetry specs chips bar */}
+        {showTopBar && (
         <TopStatusBar
           serverRunning={serverRunning}
           activeModel={activeModel}
@@ -739,6 +744,7 @@ function App() {
           sidebarVisible={sidebarVisible}
           onToggleSidebar={toggleSidebar}
         />
+        )}
 
         {/* Dynamic Workspace Container */}
         <div style={{ display: activeTab === "generator" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
@@ -797,6 +803,10 @@ function App() {
             setActiveConversationId={setActiveConversationId}
             saveConversationState={saveConversationState}
             setIsLlmLoaded={setIsLlmLoaded}
+            setActiveTab={setActiveTab}
+            onThreadChange={setChatInThread}
+            sidebarVisible={sidebarVisible}
+            onToggleSidebar={toggleSidebar}
           />
         </div>
 
