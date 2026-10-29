@@ -102,7 +102,7 @@ function HardwareTierBadge({ specs }) {
 
   const tierConfig = {
     high: { icon: Rocket, label: "High-End PC", color: "tier-high", accent: "#22c55e" },
-    mid: { icon: Scale, label: "Balanced PC", color: "tier-mid", accent: "#3b82f6" },
+    mid: { icon: Scale, label: "Balanced PC", color: "tier-mid", accent: "#8e8e93" },
     low: { icon: Turtle, label: "Potato PC", color: "tier-low", accent: "#f59e0b" },
   };
 

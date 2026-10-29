@@ -1,5 +1,5 @@
 export const THEMES = [
-  { id: "light", name: "Clean Light", type: "light", primary: "#0066cc", secondary: "#0066cc", bg: "#f5f5f7" },
+  { id: "light", name: "Clean Light", type: "light", primary: "#1d1d1f", secondary: "#8e8e93", bg: "#f5f5f7" },
   { id: "light-nord", name: "Nord Light", type: "light", primary: "#5e81ac", secondary: "#88c0d0", bg: "#eceff4" },
   { id: "light-sakura", name: "Sakura Blossom", type: "light", primary: "#d05a74", secondary: "#e597a7", bg: "#fdf6f6" },
   { id: "dark", name: "Clean Dark", type: "dark", primary: "#f4f4f4", secondary: "#a3a3a3", bg: "#0d0d0d" },
