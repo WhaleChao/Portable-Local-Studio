@@ -1449,7 +1449,17 @@ export function MarkdownRenderer({ content }) {
               case "quote":
                 return <blockquote key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</blockquote>;
               case "p":
-                return <p key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</p>;
+                // Keep the model's single line breaks (addresses, emails, poems)
+                return (
+                  <p key={blockIdx}>
+                    {block.lines.map((line, lineIdx) => (
+                      <React.Fragment key={lineIdx}>
+                        {lineIdx > 0 && <br />}
+                        {parseInlineMarkdown(line.trim())}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                );
               default:
                 return null;
             }
