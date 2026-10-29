@@ -146,10 +146,6 @@ function Sidebar({
   selectedSpeechTranscript,
   setSelectedSpeechTranscript,
   onDeleteSpeechTranscription,
-  ttsOutputs = [],
-  selectedTtsOutput,
-  setSelectedTtsOutput,
-  onDeleteTtsOutput
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -217,7 +213,6 @@ function Sidebar({
 
   const sections = useMemo(() => {
     const speechId = (item) => item && (item.filename || item.metadata || item.textFile);
-    const ttsId = (item) => item && (item.filename || item.metadata || item.audioFile);
     const needle = query.trim().toLowerCase();
     const matches = (item) => !needle || item.title.toLowerCase().includes(needle);
     const newestFirst = (a, b) => b.time - a.time;
@@ -248,29 +243,14 @@ function Sidebar({
       deleteLabel: "Delete transcription",
     }));
 
-    const voice = ttsOutputs.map((item) => ({
-      key: `tts:${ttsId(item)}`,
-      title: item.displayName || item.text || friendlyFileTitle(item.audioFile || item.filename) || "Voice clip",
-      time: toTime(item.modifiedAt || item.createdAt),
-      isActive: activeTab === "tts" && ttsId(selectedTtsOutput) === ttsId(item),
-      open: () => {
-        setSelectedTtsOutput(item);
-        setActiveTab("tts");
-      },
-      remove: (e) => onDeleteTtsOutput?.(item, e),
-      deleteLabel: "Delete voice clip",
-    }));
-
     return [
       { id: "chats", label: "Chats", items: chats.filter(matches).sort(newestFirst) },
       { id: "transcriptions", label: "Transcriptions", items: transcripts.filter(matches).sort(newestFirst) },
-      { id: "voice", label: "Voice clips", items: voice.filter(matches).sort(newestFirst) },
     ];
   }, [
-    query, conversations, speechTranscriptions, ttsOutputs, activeTab, activeConversationId,
-    selectedSpeechTranscript, selectedTtsOutput, setActiveTab, setActiveConversationId,
-    setSelectedSpeechTranscript, setSelectedTtsOutput, onDeleteConversation,
-    onDeleteSpeechTranscription, onDeleteTtsOutput
+    query, conversations, speechTranscriptions, activeTab, activeConversationId,
+    selectedSpeechTranscript, setActiveTab, setActiveConversationId,
+    setSelectedSpeechTranscript, onDeleteConversation, onDeleteSpeechTranscription
   ]);
 
   const navItems = [

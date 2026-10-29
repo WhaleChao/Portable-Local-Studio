@@ -23,6 +23,7 @@ import {
   stopSpeech,
   transcribeSpeech,
 } from "../services/api";
+import { createMicRecorder, encodeWavPcm16, resampleLinear } from "../utils/audio";
 import "../styles/transcribe.css";
 
 const LANGUAGE_OPTIONS = [
@@ -38,65 +39,6 @@ const LANGUAGE_OPTIONS = [
   { value: "ko", label: "Korean" },
   { value: "zh", label: "Chinese" },
 ];
-
-function flattenFloat32(chunks) {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Float32Array(total);
-  let offset = 0;
-  chunks.forEach((chunk) => {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  });
-  return merged;
-}
-
-function resampleLinear(input, sourceRate, targetRate) {
-  if (sourceRate === targetRate) return input;
-  const ratio = sourceRate / targetRate;
-  const newLength = Math.max(1, Math.round(input.length / ratio));
-  const output = new Float32Array(newLength);
-  for (let i = 0; i < newLength; i += 1) {
-    const src = i * ratio;
-    const left = Math.floor(src);
-    const right = Math.min(input.length - 1, left + 1);
-    const weight = src - left;
-    output[i] = input[left] * (1 - weight) + input[right] * weight;
-  }
-  return output;
-}
-
-function encodeWavPcm16(samples, sampleRate = 16000) {
-  const bytesPerSample = 2;
-  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
-  const view = new DataView(buffer);
-
-  const writeString = (offset, value) => {
-    for (let i = 0; i < value.length; i += 1) {
-      view.setUint8(offset + i, value.charCodeAt(i));
-    }
-  };
-
-  writeString(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
-  writeString(8, "WAVE");
-  writeString(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  writeString(36, "data");
-  view.setUint32(40, samples.length * bytesPerSample, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i += 1, offset += 2) {
-    const sample = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-  return new Blob([view], { type: "audio/wav" });
-}
 
 // Whisper only needs 16 kHz mono, so any format the browser can decode (MP3, M4A, OGG,
 // WebM, FLAC, MP4, WAV) is converted here before upload. This also shrinks long WAV
@@ -363,17 +305,7 @@ export default function SpeechTranscriber({
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      const chunks = [];
-      processor.onaudioprocess = (event) => {
-        chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-      };
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      recorderRef.current = { stream, audioContext, source, processor, chunks, sampleRate: audioContext.sampleRate };
+      recorderRef.current = await createMicRecorder();
       setIsRecording(true);
     } catch (err) {
       showAlert?.({ title: "Microphone unavailable", message: err.message || String(err), danger: true });
@@ -383,15 +315,9 @@ export default function SpeechTranscriber({
   const stopRecording = async () => {
     const recorder = recorderRef.current;
     if (!recorder) return;
-    recorder.processor.disconnect();
-    recorder.source.disconnect();
-    recorder.stream.getTracks().forEach((track) => track.stop());
-    await recorder.audioContext.close();
     recorderRef.current = null;
     setIsRecording(false);
-    const merged = flattenFloat32(recorder.chunks);
-    const resampled = resampleLinear(merged, recorder.sampleRate, 16000);
-    const wav = encodeWavPcm16(resampled, 16000);
+    const wav = await recorder.stop();
     setCurrentAudio(wav, `recording-${new Date().toISOString().replace(/[:.]/g, "-")}.wav`);
   };
 

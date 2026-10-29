@@ -682,6 +682,7 @@ export async function transcribeSpeech(fileOrBlob, options = {}) {
   if (options.threads) params.set("threads", String(options.threads));
   if (options.backendPreference) params.set("backendPreference", options.backendPreference);
   if (options.translate) params.set("translate", "true");
+  if (options.save === false) params.set("save", "false");
 
   const res = await fetch(`/api/speech/transcribe?${params.toString()}`, {
     method: "POST",

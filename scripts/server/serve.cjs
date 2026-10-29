@@ -2401,6 +2401,8 @@ function saveTtsOutput(result) {
     audioFile: wavFilename,
     metadata: jsonFilename,
     displayName: result.displayName || `${result.voiceName || result.voice} - ${createdAt}`,
+    // Where each sentence starts and ends in the audio, for word highlighting during playback
+    ...(Array.isArray(result.segments) && result.segments.length ? { segments: result.segments } : {}),
   };
   fs.writeFileSync(path.join(TTS_OUTPUTS, jsonFilename), JSON.stringify(metadata, null, 2), "utf8");
   return {
@@ -2478,16 +2480,18 @@ function synthesizeTts(text, options = {}) {
       cacheDir: TTS_CACHE,
     };
 
+    const startedAt = Date.now();
     ttsGenerationState = {
       active: true,
-      phase: "Generating speech...",
+      phase: "Loading voice model",
       progress: -1,
+      done: 0,
+      total: 0,
+      startedAt,
       model: model.filename,
       voice,
       output: "",
     };
-
-    const startedAt = Date.now();
     const proc = spawn(process.execPath, [TTS_WORKER], {
       cwd: ROOT,
       stdio: "pipe",
@@ -2501,15 +2505,39 @@ function synthesizeTts(text, options = {}) {
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (data) => { stdout += data.toString(); });
+    // The worker reports "@@progress {...}" lines on stderr; everything else is ordinary log output
+    let stderrLine = "";
     proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-      process.stderr.write("  [tts] " + data.toString());
+      stderrLine += data.toString();
+      const lines = stderrLine.split("\n");
+      stderrLine = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith("@@progress ")) {
+          try {
+            const update = JSON.parse(line.slice("@@progress ".length));
+            const total = Number(update.total) || 0;
+            const done = Number(update.done) || 0;
+            ttsGenerationState = {
+              ...ttsGenerationState,
+              phase: update.phase === "loading" ? "Loading voice model" : update.phase === "saving" ? "Saving" : "Generating speech",
+              progress: update.phase === "loading" || total === 0 ? -1 : Math.min(99, Math.round((done / total) * 100)),
+              done,
+              total,
+            };
+          } catch (_) {}
+          continue;
+        }
+        stderr += line + "\n";
+        process.stderr.write("  [tts] " + line + "\n");
+      }
     });
     proc.on("error", (err) => {
       ttsGenerationState = { active: false, phase: "Failed", progress: 0, model: model.filename, voice, output: "" };
       reject(err);
     });
     proc.on("exit", (code) => {
+      // An error stack usually arrives without a trailing newline
+      if (stderrLine) stderr += stderrLine;
       ttsGenerationState = { active: false, phase: code === 0 ? "Complete" : "Failed", progress: code === 0 ? 100 : 0, model: model.filename, voice, output: "" };
       if (code !== 0) {
         try { fs.unlinkSync(tempWav); } catch (_) {}
@@ -2530,9 +2558,11 @@ function synthesizeTts(text, options = {}) {
           voice,
           voiceName: voiceInfo.name,
           speed,
-          durationMs: Date.now() - startedAt,
+          // Length of the audio itself; older workers only let us time the generation
+          durationMs: workerResult.durationMs || Date.now() - startedAt,
           sampleRate: workerResult.sampleRate || 24000,
           wavPath: tempWav,
+          segments: workerResult.segments,
           displayName: `${voiceInfo.name || voice} - ${cleanedText.slice(0, 40)}`,
         });
         try { fs.unlinkSync(tempWav); } catch (_) {}
@@ -2741,6 +2771,12 @@ function transcribeWavBuffer(buffer, options = {}) {
       } catch (_) {}
       try { fs.unlinkSync(txtPath); } catch (_) {}
       try { fs.unlinkSync(jsonPath); } catch (_) {}
+      // Dictation (the Voice screen's mic) only wants the text, not a saved transcript
+      if (options.save === false) {
+        speechError = null;
+        resolve({ text, model: model.filename, language, durationMs: Date.now() - startedAt });
+        return;
+      }
       const saved = saveTranscript({
         text,
         model: model.filename,
@@ -6317,6 +6353,7 @@ const server = http.createServer(async (req, res) => {
         threads: parsed.searchParams.get("threads") || speechSettings.threads,
         backendPreference: parsed.searchParams.get("backendPreference") || speechSettings.backendPreference,
         translate: parsed.searchParams.get("translate") === "true",
+        save: parsed.searchParams.get("save") !== "false",
       }));
       return json(res, 200, { ok: true, transcription: result });
     } catch (err) {

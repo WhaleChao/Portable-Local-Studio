@@ -755,12 +755,8 @@ function App() {
       selectedSpeechTranscript={selectedSpeechTranscript}
       setSelectedSpeechTranscript={setSelectedSpeechTranscript}
       onDeleteSpeechTranscription={handleDeleteSpeechTranscription}
-      ttsOutputs={ttsOutputs}
-      selectedTtsOutput={selectedTtsOutput}
-      setSelectedTtsOutput={setSelectedTtsOutput}
-      onDeleteTtsOutput={handleDeleteTtsOutput}
     />
-  ), [sidebarVisible, toggleSidebar, activeTab, openTabFromSidebar, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, handleDeleteTtsOutput]);
+  ), [sidebarVisible, toggleSidebar, activeTab, openTabFromSidebar, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription]);
 
   const handleStopServer = useCallback(async () => {
     if (!serverRunning || isStoppingServer) return;
