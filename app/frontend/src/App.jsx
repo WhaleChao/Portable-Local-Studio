@@ -727,6 +727,13 @@ function App() {
 
   const toggleSidebar = useCallback(() => setSidebarVisible((visible) => !visible), []);
 
+  // Picking Images in the sidebar always lands on its start screen, even when it is already open
+  const [imagesHomeSignal, setImagesHomeSignal] = useState(0);
+  const openTabFromSidebar = useCallback((tab) => {
+    if (tab === "generator") setImagesHomeSignal((n) => n + 1);
+    setActiveTab(tab);
+  }, []);
+
   // The top bar only shows outside a running conversation, so chats get the full height
   const [chatInThread, setChatInThread] = useState(false);
   const showTopBar = !(activeTab === "chat" && chatInThread);
@@ -736,7 +743,7 @@ function App() {
       collapsed={!sidebarVisible}
       onToggleSidebar={toggleSidebar}
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      setActiveTab={openTabFromSidebar}
       specs={specs}
       telemetry={telemetry}
       onNewChat={handleNewChat}
@@ -753,7 +760,7 @@ function App() {
       setSelectedTtsOutput={setSelectedTtsOutput}
       onDeleteTtsOutput={handleDeleteTtsOutput}
     />
-  ), [sidebarVisible, toggleSidebar, activeTab, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, handleDeleteTtsOutput]);
+  ), [sidebarVisible, toggleSidebar, activeTab, openTabFromSidebar, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, handleDeleteTtsOutput]);
 
   const handleStopServer = useCallback(async () => {
     if (!serverRunning || isStoppingServer) return;
@@ -795,6 +802,7 @@ function App() {
         {/* Dynamic Workspace Container */}
         <div style={{ display: activeTab === "generator" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
           <Generator
+            homeSignal={imagesHomeSignal}
             prompt={prompt}
             setPrompt={setPrompt}
             negativePrompt={negativePrompt}

@@ -8,7 +8,13 @@ import {
   Copy,
   Dices,
   Download,
+  CheckSquare,
   ImagePlus,
+  LayoutGrid,
+  Maximize2,
+  Minimize2,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   SlidersHorizontal,
@@ -71,31 +77,25 @@ const sizeLabel = (width, height) => {
   return `${width}×${height}`;
 };
 
-const GalleryItem = memo(({ img, idx, isSelected, selectMode, onActivate }) => {
-  const handleClick = (e) => {
-    onActivate(idx, e);
-  };
-  const label = img.prompt ? `Image: ${img.prompt}` : "Generated image";
-  return (
-    <button
-      type="button"
-      className={`images-tile ${isSelected ? "selected" : ""}`}
-      onClick={handleClick}
-      aria-label={label}
-      aria-pressed={selectMode ? isSelected : undefined}
-      title={`Prompt: ${img.prompt}\nSeed: ${img.seed}${img.duration_sec ? `\nTime: ${img.duration_sec.toFixed(1)}s` : ""}`}
-    >
-      <img src={img.url} className="images-tile-img" alt="" loading="lazy" decoding="async" />
-      {(isSelected || selectMode) && (
-        <span className={`images-tile-check ${isSelected ? "on" : ""}`} aria-hidden="true">
-          {isSelected && <Check size={14} />}
-        </span>
-      )}
-    </button>
-  );
-});
+// History panel width: drag its left edge, or use the header button to jump between sizes
+const HISTORY_MIN = 200;
+const HISTORY_MAX = 560;
+const HISTORY_SMALL = 264;
+const HISTORY_WIDE = 460;
+const HISTORY_WIDTH_KEY = "imagesHistoryWidth";
+const clampHistoryWidth = (value) => Math.min(HISTORY_MAX, Math.max(HISTORY_MIN, Math.round(value)));
+
+const readHistoryWidth = () => {
+  try {
+    const saved = Number(localStorage.getItem(HISTORY_WIDTH_KEY));
+    return saved ? clampHistoryWidth(saved) : HISTORY_SMALL;
+  } catch (_) {
+    return HISTORY_SMALL;
+  }
+};
 
 function Generator({
+  homeSignal,
   prompt,
   setPrompt,
   negativePrompt,
@@ -132,7 +132,6 @@ function Generator({
   const [imageModels, setImageModels] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [isDecoding, setIsDecoding] = useState(false);
-  const [selectedGalleryIndexes, setSelectedGalleryIndexes] = useState([]);
   const [baseImage, setBaseImage] = useState(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const timerRef = useRef(null);
@@ -530,6 +529,7 @@ function Generator({
       }
 
       setOutputImage(savedUrl);
+      setStageUrl(savedUrl);
       setOutputSeed(result.seed);
       setGenDuration(result.duration_sec);
 
@@ -599,8 +599,16 @@ function Generator({
   };
 
   // ---- Page UI state (layout only; generation logic lives above) ----
-  const [selectMode, setSelectMode] = useState(false);
   const [viewerUrl, setViewerUrl] = useState(null);
+  // Image shown on the stage; empty until something is generated or picked from history
+  const [stageUrl, setStageUrl] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(() => {
+    try {
+      return localStorage.getItem("imagesHistoryOpen") !== "false";
+    } catch (_) {
+      return true;
+    }
+  });
   const [openMenu, setOpenMenu] = useState(null); // "size" | "steps" | "seed" | "more" | "model"
   const [backendReady, setBackendReady] = useState(false);
   const composerRef = useRef(null);
@@ -872,47 +880,6 @@ function Generator({
     }
   };
 
-  // ---- Gallery selection ----
-  const handleTileActivate = useCallback((idx, event) => {
-    const multi = event.ctrlKey || event.metaKey || event.shiftKey;
-    if (multi || selectMode) {
-      setSelectedGalleryIndexes((prev) =>
-        prev.includes(idx) ? prev.filter((item) => item !== idx) : [...prev, idx]
-      );
-      return;
-    }
-    const item = generatedImages[idx];
-    if (item) openViewer(item.url, event.currentTarget);
-  }, [generatedImages, selectMode, openViewer]);
-
-  const selectedGalleryItems = selectedGalleryIndexes
-    .map((idx) => generatedImages[idx])
-    .filter(Boolean);
-
-  const clearGallerySelection = () => {
-    setSelectedGalleryIndexes([]);
-  };
-
-  const toggleSelectMode = () => {
-    setSelectMode((value) => {
-      if (value) setSelectedGalleryIndexes([]);
-      return !value;
-    });
-  };
-
-  const useSelectedGalleryItem = () => {
-    if (selectedGalleryItems[0]) {
-      loadHistoryItem(selectedGalleryItems[0]);
-    }
-  };
-
-  const downloadSelectedGalleryItems = () => {
-    selectedGalleryItems.forEach((item, index) => {
-      const seed = item.seed ?? Date.now();
-      downloadImageUrl(item.url, `diffusion-${seed}-${index + 1}.png`);
-    });
-  };
-
   const deleteOutputs = async (items) => {
     if (items.length === 0) return false;
     const count = items.length;
@@ -928,7 +895,6 @@ function Generator({
       await deleteGeneratedOutputs(items);
       const removed = new Set(items);
       setGeneratedImages((prev) => prev.filter((img) => !removed.has(img)));
-      setSelectedGalleryIndexes([]);
 
       if (items.some((item) => item.url === outputImage)) {
         setOutputImage(null);
@@ -946,8 +912,6 @@ function Generator({
       return false;
     }
   };
-
-  const deleteSelectedGalleryItems = () => deleteOutputs(selectedGalleryItems);
 
   const deleteViewerItem = async (item) => {
     const index = generatedImages.indexOf(item);
@@ -983,8 +947,14 @@ function Generator({
   const showProgressTile = isBusy;
 
   const progressTile = showProgressTile && (
-    <div className="images-tile images-progress-tile" role="group" aria-label="Generation progress">
-      <div className="images-spinner" aria-hidden="true" />
+    <div
+      className="images-progress-tile"
+      role="group"
+      aria-label="Generation progress"
+      // Shaped like the image being made, so the result drops into the same frame
+      style={{ aspectRatio: `${parseInt(constraints.width || 512)} / ${parseInt(constraints.height || 512)}` }}
+    >
+      {(isRestartingBackend || isCancelling) && <div className="images-spinner" aria-hidden="true" />}
       {isRestartingBackend ? (
         <>
           <div className="images-progress-phase">
@@ -1018,494 +988,810 @@ function Generator({
         </>
       ) : (
         <>
-          <div className="images-progress-phase">{isDecoding ? "Decoding latents" : "Generating"}</div>
-          <div className="images-progress-meta">
-            Step {currentStep} / {constraints.steps}
+          <div
+            className="images-progress-percent"
+            title={[
+              `${elapsedTime}s elapsed`,
+              generationSpeed && generationSpeed !== "decoding" ? generationSpeed : "",
+            ].filter(Boolean).join(" · ")}
+          >
+            {generationProgress}<span>%</span>
           </div>
-          <div className="images-progress-bar" aria-hidden="true">
-            <div className="images-progress-fill" style={{ width: `${generationProgress}%` }} />
+          <div className="images-progress-phase">
+            {isDecoding ? "Decoding" : `Step ${currentStep} of ${constraints.steps}`}
           </div>
           <div className="images-progress-meta">
-            {generationProgress}% · {elapsedTime}s
-            {generationSpeed && generationSpeed !== "decoding" ? ` · ${generationSpeed}` : ""}
-            {estimatedLeftTime > 0 ? ` · ~${estimatedLeftTime}s left` : ""}
+            {estimatedLeftTime > 0 ? `About ${estimatedLeftTime}s left` : `${elapsedTime}s`}
           </div>
           {isCpuFallback && (
             <div className="images-progress-warning">
               <AlertTriangle size={14} aria-hidden="true" />
-              <span>Running on CPU, slower than expected</span>
+              <span>Running on CPU</span>
             </div>
           )}
-          {isGenerating && (
-            <button type="button" className="btn images-progress-stop" onClick={handleCancelGeneration}>
-              Stop
-            </button>
-          )}
+          <div className="images-progress-edge" aria-hidden="true">
+            <div className="images-progress-fill" style={{ width: `${generationProgress}%` }} />
+          </div>
         </>
       )}
     </div>
   );
 
-  return (
-    <div className="page images-page">
-      <div className="page-scroll">
-        <div className="page-column">
-          <header className="page-header">
-            <h1 className="page-title">Images</h1>
-            {imageCount > 0 && (
-              <div className="images-header-actions">
-                {selectedGalleryItems.length > 0 ? (
-                  <>
-                    <span className="images-count">{selectedGalleryItems.length} selected</span>
-                    <button type="button" className="icon-btn" onClick={useSelectedGalleryItem} aria-label="Reuse prompt and settings" title="Reuse prompt and settings">
-                      <RefreshCw size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" className="icon-btn" onClick={downloadSelectedGalleryItems} aria-label="Download selected" title="Download selected">
-                      <Download size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" className="icon-btn danger" onClick={deleteSelectedGalleryItems} aria-label="Delete selected" title="Delete selected">
-                      <Trash2 size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" className="icon-btn" onClick={clearGallerySelection} aria-label="Clear selection" title="Clear selection">
-                      <X size={16} aria-hidden="true" />
-                    </button>
-                  </>
-                ) : (
-                  <span className="images-count">{imageCount} image{imageCount === 1 ? "" : "s"}</span>
-                )}
-                <button
-                  type="button"
-                  className={`btn ${selectMode ? "images-btn-on" : ""}`}
-                  onClick={toggleSelectMode}
-                  aria-pressed={selectMode}
-                  title="Select images. Ctrl-click or Shift-click also selects."
-                >
-                  {selectMode ? "Done" : "Select"}
-                </button>
-              </div>
-            )}
-          </header>
+  // App bumps this when Images is picked in the sidebar: go back to the start screen
+  useEffect(() => {
+    if (homeSignal) setStageUrl(null);
+  }, [homeSignal]);
 
-          {errorMsg && !isBusy && (
-            <div className="images-error" role="alert">
-              <AlertTriangle size={16} aria-hidden="true" />
-              <div className="images-error-text">
-                <div>{errorMsg}</div>
-                {textModelBlocking ? (
-                  <button type="button" className="btn images-error-action" onClick={handleUnloadTextAndGenerate}>
-                    Unload text model and generate
-                  </button>
-                ) : (
-                  <div className="images-error-hint">If this keeps happening, try a smaller size such as 512×512.</div>
-                )}
-              </div>
-              <button type="button" className="icon-btn" onClick={() => setErrorMsg(null)} aria-label="Dismiss error">
-                <X size={16} aria-hidden="true" />
-              </button>
-            </div>
-          )}
+  const [historyWidth, setHistoryWidth] = useState(readHistoryWidth);
+  const [historyResizing, setHistoryResizing] = useState(false);
 
-          {imageCount === 0 && !showProgressTile ? (
-            <div className="empty-state images-empty">
-              <div className="empty-state-title">Create your first image</div>
-              <div>Describe it below and press Enter. Images are saved on your drive.</div>
-            </div>
-          ) : (
-            <div className="images-grid">
-              {progressTile}
-              {generatedImages.map((img, idx) => (
-                <GalleryItem
-                  key={img.image || img.url || idx}
-                  img={img}
-                  idx={idx}
-                  isSelected={selectedGalleryIndexes.includes(idx)}
-                  selectMode={selectMode}
-                  onActivate={handleTileActivate}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_WIDTH_KEY, String(historyWidth));
+    } catch (_) {
+      // Width just resets next time
+    }
+  }, [historyWidth]);
 
-      <div className="page-dock">
-        <div className="chat-composer images-composer" ref={composerRef} onKeyDown={handleComposerKeyDown}>
-          {baseImage && !isNpuBackend && (
-            <div className="chat-attachments">
-              <div className="chat-attachment images-base-attachment">
-                <img src={baseImage} alt="" className="chat-attachment-thumb" />
-                <span className="chat-attachment-name">Base image</span>
-                <button
-                  type="button"
-                  className="chat-attachment-remove"
-                  onClick={handleClearBaseImage}
-                  disabled={isBusy}
-                  aria-label="Remove base image"
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </div>
-              <label className="images-strength" title="Lower stays closer to your image; higher gives more freedom. 0.7 is a good start.">
-                <span className="images-strength-label">Strength</span>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1"
-                  step="0.05"
-                  value={constraints.denoisingStrength}
-                  onChange={(e) => setConstraints((prev) => ({ ...prev, denoisingStrength: parseFloat(e.target.value) }))}
-                  disabled={isBusy}
-                  aria-label="Transformation strength"
-                />
-                <span className="images-strength-value">{Number(constraints.denoisingStrength).toFixed(2)}</span>
-              </label>
-            </div>
-          )}
+  // The panel sits on the right, so dragging left makes it wider
+  const startHistoryResize = (event) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = historyWidth;
+    setHistoryResizing(true);
+    document.body.style.cursor = "col-resize";
+    const onMove = (moveEvent) => setHistoryWidth(clampHistoryWidth(startWidth - (moveEvent.clientX - startX)));
+    const onUp = () => {
+      setHistoryResizing(false);
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
-          <div className="chat-composer-inner">
-            <textarea
-              ref={textareaRef}
-              className="chat-composer-textarea"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submit();
-                }
-              }}
-              placeholder={activeModel ? "Describe an image" : "Choose an image model to start"}
-              aria-label="Image prompt"
-              rows={1}
+  const resizeHistoryWithKeys = (event) => {
+    const step = event.shiftKey ? 40 : 16;
+    const nextWidth = {
+      ArrowLeft: (current) => current + step,
+      ArrowRight: (current) => current - step,
+      Home: () => HISTORY_MIN,
+      End: () => HISTORY_MAX,
+    }[event.key];
+    if (!nextWidth) return;
+    event.preventDefault();
+    setHistoryWidth((current) => clampHistoryWidth(nextWidth(current)));
+  };
+
+  const historyIsWide = historyWidth >= (HISTORY_SMALL + HISTORY_WIDE) / 2;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("imagesHistoryOpen", String(historyOpen));
+    } catch (_) {
+      // Storage can be unavailable; the panel just reopens next time
+    }
+  }, [historyOpen]);
+
+  const stageItem = stageUrl ? generatedImages.find((img) => img.url === stageUrl) || null : null;
+  const stageEmpty = !isBusy && !stageItem;
+  // The empty screen shows the grid under the prompt instead, like Grok Imagine
+  const showHistory = historyOpen && imageCount > 0 && !stageEmpty;
+
+  const itemMeta = (item) => [
+    item.width && item.height ? `${item.width}×${item.height}` : null,
+    item.steps ? `${item.steps} steps` : null,
+    item.seed !== undefined && item.seed !== null ? `Seed ${item.seed}` : null,
+    item.duration_sec ? `${Number(item.duration_sec).toFixed(1)}s` : null,
+    item.model ? modelDisplayName(item.model) : null,
+  ].filter(Boolean).join(" · ");
+
+  // History grouped by day, newest first (the list already arrives newest first)
+  const historyGroups = [];
+  {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const dayMs = 24 * 60 * 60 * 1000;
+    for (const img of generatedImages) {
+      const created = img.createdAt ? new Date(img.createdAt).getTime() : NaN;
+      const label = Number.isNaN(created)
+        ? "Earlier"
+        : created >= startOfToday.getTime()
+          ? "Today"
+          : created >= startOfToday.getTime() - dayMs
+            ? "Yesterday"
+            : created >= startOfToday.getTime() - 6 * dayMs
+              ? "This week"
+              : "Earlier";
+      const last = historyGroups[historyGroups.length - 1];
+      if (last && last.label === label) last.items.push(img);
+      else historyGroups.push({ label, items: [img] });
+    }
+  }
+
+  // Arrow keys step through history; up and down move a whole row of the grid
+  const handleHistoryKeyDown = (event) => {
+    const grid = event.target.closest?.(".images-history-grid");
+    const columns = grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 2;
+    const steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
+    if (!(event.key in steps)) return;
+    const current = generatedImages.findIndex((img) => img.url === event.target.dataset?.url);
+    if (current === -1) return;
+    const next = generatedImages[Math.min(generatedImages.length - 1, Math.max(0, current + steps[event.key]))];
+    if (!next) return;
+    event.preventDefault();
+    setStageUrl(next.url);
+    event.currentTarget.querySelector(`[data-url="${CSS.escape(next.url)}"]`)?.focus();
+  };
+
+  const deleteStageItem = async (item) => {
+    const index = generatedImages.indexOf(item);
+    const deleted = await deleteOutputs([item]);
+    if (!deleted) return;
+    const next = generatedImages.filter((img) => img !== item);
+    setStageUrl(next.length > 0 ? next[Math.min(index, next.length - 1)].url : null);
+  };
+
+  // ---- Grid selection (start screen) ----
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedUrls, setSelectedUrls] = useState([]);
+
+  const toggleSelected = (url) => {
+    setSelectMode(true);
+    setSelectedUrls((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedUrls([]);
+  };
+
+  // In select mode, or with Ctrl/Cmd/Shift held, a click selects instead of opening
+  const handleTileClick = (img, event) => {
+    if (selectMode || event.ctrlKey || event.metaKey || event.shiftKey) {
+      toggleSelected(img.url);
+      return;
+    }
+    setStageUrl(img.url);
+  };
+
+  const selectedItems = generatedImages.filter((img) => selectedUrls.includes(img.url));
+
+  const downloadSelected = () => {
+    selectedItems.forEach((item, index) => {
+      downloadImageUrl(item.url, `diffusion-${item.seed ?? Date.now()}-${index + 1}.png`);
+    });
+  };
+
+  const deleteSelected = async () => {
+    if (await deleteOutputs(selectedItems)) exitSelectMode();
+  };
+
+  // Leaving the start screen drops any selection
+  useEffect(() => {
+    if (!stageEmpty) {
+      setSelectMode(false);
+      setSelectedUrls([]);
+    }
+  }, [stageEmpty]);
+
+  const composer = (
+    <div className="chat-composer images-composer" ref={composerRef} onKeyDown={handleComposerKeyDown}>
+      {baseImage && !isNpuBackend && (
+        <div className="chat-attachments">
+          <div className="chat-attachment images-base-attachment">
+            <img src={baseImage} alt="" className="chat-attachment-thumb" />
+            <span className="chat-attachment-name">Base image</span>
+            <button
+              type="button"
+              className="chat-attachment-remove"
+              onClick={handleClearBaseImage}
+              disabled={isBusy}
+              aria-label="Remove base image"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </div>
+          <label className="images-strength" title="Lower stays closer to your image; higher gives more freedom. 0.7 is a good start.">
+            <span className="images-strength-label">Strength</span>
+            <input
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.05"
+              value={constraints.denoisingStrength}
+              onChange={(e) => setConstraints((prev) => ({ ...prev, denoisingStrength: parseFloat(e.target.value) }))}
+              disabled={isBusy}
+              aria-label="Transformation strength"
             />
+            <span className="images-strength-value">{Number(constraints.denoisingStrength).toFixed(2)}</span>
+          </label>
+        </div>
+      )}
 
-            <div className="chat-composer-toolbar">
-              <div className="chat-composer-toolbar-left">
-                {!isNpuBackend && (
-                  <>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      className="images-hidden-input"
-                      onChange={handleBaseImageSelect}
-                      disabled={isBusy}
-                      tabIndex={-1}
-                      aria-hidden="true"
-                    />
-                    <button
-                      type="button"
-                      className="chat-composer-icon-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isBusy}
-                      aria-label={baseImage ? "Replace base image" : "Add base image"}
-                      title="Start from one of your own images"
-                    >
-                      <Plus size={20} aria-hidden="true" />
-                    </button>
-                  </>
-                )}
+      <div className="chat-composer-inner">
+        <textarea
+          ref={textareaRef}
+          className="chat-composer-textarea"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submit();
+            }
+          }}
+          placeholder={activeModel ? "Describe an image" : "Choose an image model to start"}
+          aria-label="Image prompt"
+          rows={1}
+        />
 
-                {/* Size */}
-                <div className="images-menu-anchor">
-                  <button
-                    type="button"
-                    className="chat-composer-chip"
-                    onClick={() => toggleMenu("size")}
-                    disabled={isBusy}
-                    aria-haspopup="menu"
-                    aria-expanded={openMenu === "size"}
-                    aria-label={`Image size ${constraints.width} by ${constraints.height}`}
-                  >
-                    <span>{sizeLabel(constraints.width, constraints.height)}</span>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </button>
-                  {openMenu === "size" && (
-                    <div className="chat-model-menu up images-menu-left images-size-menu" role="menu">
-                      {SIZE_GROUPS.map((group, groupIndex) => (
-                        <React.Fragment key={group.label}>
-                          {groupIndex > 0 && <div className="chat-model-menu-divider" />}
-                          <div className="chat-model-menu-label">{group.label}</div>
-                          {group.sizes.map((size) => {
-                            const selected = constraints.width === size.width && constraints.height === size.height;
-                            return (
-                              <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={selected}
-                                key={`${size.width}x${size.height}`}
-                                className={`chat-model-menu-item ${selected ? "selected" : ""}`}
-                                onClick={() => {
-                                  setConstraints((prev) => ({ ...prev, width: size.width, height: size.height }));
-                                  setOpenMenu(null);
-                                }}
-                              >
-                                <span className="chat-model-menu-name">{size.ratio}</span>
-                                <span className="images-menu-meta">{size.width}×{size.height}</span>
-                              </button>
-                            );
-                          })}
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  )}
-                </div>
+        <div className="chat-composer-toolbar">
+          <div className="chat-composer-toolbar-left">
+            {!isNpuBackend && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="images-hidden-input"
+                  onChange={handleBaseImageSelect}
+                  disabled={isBusy}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+                <button
+                  type="button"
+                  className="chat-composer-icon-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isBusy}
+                  aria-label={baseImage ? "Replace base image" : "Add base image"}
+                  title="Start from one of your own images"
+                >
+                  <Plus size={20} aria-hidden="true" />
+                </button>
+              </>
+            )}
 
-                {/* Steps */}
-                <div className="images-menu-anchor">
-                  <button
-                    type="button"
-                    className="chat-composer-chip"
-                    onClick={() => toggleMenu("steps")}
-                    disabled={isBusy}
-                    aria-haspopup="dialog"
-                    aria-expanded={openMenu === "steps"}
-                  >
-                    <span>{constraints.steps} steps</span>
-                  </button>
-                  {openMenu === "steps" && (
-                    <div className="popover images-popover" role="dialog" aria-label="Steps">
-                      <div className="field">
-                        <label className="field-label" htmlFor="images-steps">Steps</label>
-                        <div className="images-range-row">
-                          <input
-                            type="range"
-                            min="1"
-                            max={maxSteps}
-                            value={constraints.steps}
-                            onChange={(e) => handleStepsChange(e.target.value)}
-                            aria-label="Steps slider"
-                          />
-                          <input
-                            id="images-steps"
-                            type="number"
-                            className="images-input images-input-small"
-                            min="1"
-                            max={maxSteps}
-                            value={constraints.steps}
-                            onChange={(e) => handleStepsChange(e.target.value)}
-                          />
-                        </div>
-                        <div className="field-hint">More steps add detail but take longer.</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Seed */}
-                <div className="images-menu-anchor">
-                  <button
-                    type="button"
-                    className="chat-composer-chip"
-                    onClick={() => toggleMenu("seed")}
-                    disabled={isBusy}
-                    aria-haspopup="dialog"
-                    aria-expanded={openMenu === "seed"}
-                  >
-                    <Dices size={15} aria-hidden="true" />
-                    <span>{seedIsRandom ? "Random seed" : `Seed ${constraints.seed}`}</span>
-                  </button>
-                  {openMenu === "seed" && (
-                    <div className="popover images-popover" role="dialog" aria-label="Seed">
-                      <div className="field">
-                        <span className="field-label">Seed</span>
-                        <div className="segmented">
-                          <button
-                            type="button"
-                            className="segmented-item"
-                            aria-pressed={seedIsRandom}
-                            onClick={() => updateConstraint("seed", -1)}
-                          >
-                            Random
-                          </button>
-                          <button
-                            type="button"
-                            className="segmented-item"
-                            aria-pressed={!seedIsRandom}
-                            onClick={() => {
-                              if (seedIsRandom) updateConstraint("seed", Math.floor(Math.random() * 2147483647));
-                            }}
-                          >
-                            Fixed
-                          </button>
-                        </div>
-                      </div>
-                      {!seedIsRandom && (
-                        <div className="field">
-                          <label className="field-label" htmlFor="images-seed">Seed number</label>
-                          <input
-                            id="images-seed"
-                            type="number"
-                            className="images-input"
-                            value={constraints.seed}
-                            onChange={(e) => updateConstraint("seed", parseInt(e.target.value) || -1)}
-                          />
-                          <div className="field-hint">The same seed and prompt give the same image.</div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* More */}
-                <div className="images-menu-anchor">
-                  <button
-                    type="button"
-                    className={`chat-composer-chip ${negativePrompt?.trim() ? "images-chip-set" : ""}`}
-                    onClick={() => toggleMenu("more")}
-                    aria-haspopup="dialog"
-                    aria-expanded={openMenu === "more"}
-                  >
-                    <SlidersHorizontal size={15} aria-hidden="true" />
-                    <span>More</span>
-                  </button>
-                  {openMenu === "more" && (
-                    <div className="popover images-popover images-popover-wide" role="dialog" aria-label="More settings">
-                      <div className="field">
-                        <label className="field-label" htmlFor="images-negative">Negative prompt</label>
-                        <textarea
-                          id="images-negative"
-                          className="images-input images-textarea"
-                          value={negativePrompt}
-                          onChange={(e) => setNegativePrompt(e.target.value)}
-                          placeholder="Things to avoid, such as blurry, text, watermark"
-                          disabled={isBusy}
-                          rows={3}
-                        />
-                      </div>
-                      <div className="images-field-row">
-                        <div className="field">
-                          <label className="field-label" htmlFor="images-sampler">Sampler</label>
-                          <select
-                            id="images-sampler"
-                            className="images-input"
-                            value={constraints.sampler}
-                            onChange={(e) => updateConstraint("sampler", e.target.value)}
-                            disabled={isBusy}
-                          >
-                            {(SAMPLERS.includes(constraints.sampler) ? SAMPLERS : [constraints.sampler, ...SAMPLERS]).map((s) => (
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="field">
-                          <label className="field-label" htmlFor="images-cfg">CFG scale</label>
-                          <input
-                            id="images-cfg"
-                            type="number"
-                            className="images-input"
-                            min="1"
-                            max="30"
-                            step="0.5"
-                            value={constraints.cfgScale}
-                            onChange={(e) => handleCfgChange(e.target.value)}
-                            disabled={isBusy}
-                          />
-                        </div>
-                      </div>
-                      <div className="field-hint">How closely the image follows the prompt. Fast models work best near 1.</div>
-                      <button
-                        type="button"
-                        className="btn images-popover-link"
-                        onClick={() => {
-                          setOpenMenu(null);
-                          setActiveTab?.("settings");
-                        }}
-                      >
-                        Hardware and backend settings
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="chat-composer-toolbar-right">
-                <div className="chat-model-picker">
-                  <button
-                    type="button"
-                    className={`chat-model-trigger ${openMenu === "model" ? "active" : ""}`}
-                    onClick={() => toggleMenu("model")}
-                    disabled={isBusy}
-                    aria-haspopup="menu"
-                    aria-expanded={openMenu === "model"}
-                    title={activeModel || "Choose an image model"}
-                  >
-                    {backendReady && <span className="chat-model-dot" aria-hidden="true" />}
-                    <span className="chat-model-trigger-label">{modelLabel}</span>
-                    <ChevronDown size={15} aria-hidden="true" />
-                  </button>
-                  {openMenu === "model" && (
-                    <div className="chat-model-menu up" role="menu">
-                      <div className="chat-model-menu-label">Image models</div>
-                      {imageModels === null && (
-                        <div className="chat-model-menu-item images-menu-static">
-                          <span className="chat-model-menu-name">Looking for models…</span>
-                        </div>
-                      )}
-                      {imageModels?.length === 0 && (
-                        <div className="chat-model-menu-item images-menu-static">
-                          <span className="chat-model-menu-name">No image models yet</span>
-                        </div>
-                      )}
-                      {imageModels?.map((model) => {
-                        const isSelected = activeModel === model.filename;
+            {/* Size */}
+            <div className="images-menu-anchor">
+              <button
+                type="button"
+                className="chat-composer-chip"
+                onClick={() => toggleMenu("size")}
+                disabled={isBusy}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "size"}
+                aria-label={`Image size ${constraints.width} by ${constraints.height}`}
+              >
+                <span>{sizeLabel(constraints.width, constraints.height)}</span>
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+              {openMenu === "size" && (
+                <div className="chat-model-menu images-menu-left images-size-menu" role="menu">
+                  {SIZE_GROUPS.map((group, groupIndex) => (
+                    <React.Fragment key={group.label}>
+                      {groupIndex > 0 && <div className="chat-model-menu-divider" />}
+                      <div className="chat-model-menu-label">{group.label}</div>
+                      {group.sizes.map((size) => {
+                        const selected = constraints.width === size.width && constraints.height === size.height;
                         return (
                           <button
                             type="button"
-                            role="menuitem"
-                            key={model.filename}
-                            className={`chat-model-menu-item ${isSelected ? "selected" : ""}`}
-                            title={model.filename}
-                            onClick={() => handlePickModel(model)}
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            key={`${size.width}x${size.height}`}
+                            className={`chat-model-menu-item ${selected ? "selected" : ""}`}
+                            onClick={() => {
+                              setConstraints((prev) => ({ ...prev, width: size.width, height: size.height }));
+                              setOpenMenu(null);
+                            }}
                           >
-                            <span className="chat-model-menu-name">{modelDisplayName(model.filename)}</span>
-                            {isSelected && backendReady && <span className="chat-model-menu-badge">Loaded</span>}
+                            <span className="chat-model-menu-name">{size.ratio}</span>
+                            <span className="images-menu-meta">{size.width}×{size.height}</span>
                           </button>
                         );
                       })}
-                      <div className="chat-model-menu-divider" />
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Steps */}
+            <div className="images-menu-anchor">
+              <button
+                type="button"
+                className="chat-composer-chip"
+                onClick={() => toggleMenu("steps")}
+                disabled={isBusy}
+                aria-haspopup="dialog"
+                aria-expanded={openMenu === "steps"}
+              >
+                <span>{constraints.steps} steps</span>
+              </button>
+              {openMenu === "steps" && (
+                <div className="popover images-popover" role="dialog" aria-label="Steps">
+                  <div className="field">
+                    <label className="field-label" htmlFor="images-steps">Steps</label>
+                    <div className="images-range-row">
+                      <input
+                        type="range"
+                        min="1"
+                        max={maxSteps}
+                        value={constraints.steps}
+                        onChange={(e) => handleStepsChange(e.target.value)}
+                        aria-label="Steps slider"
+                      />
+                      <input
+                        id="images-steps"
+                        type="number"
+                        className="images-input images-input-small"
+                        min="1"
+                        max={maxSteps}
+                        value={constraints.steps}
+                        onChange={(e) => handleStepsChange(e.target.value)}
+                      />
+                    </div>
+                    <div className="field-hint">More steps add detail but take longer.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Seed */}
+            <div className="images-menu-anchor">
+              <button
+                type="button"
+                className="chat-composer-chip"
+                onClick={() => toggleMenu("seed")}
+                disabled={isBusy}
+                aria-haspopup="dialog"
+                aria-expanded={openMenu === "seed"}
+              >
+                <Dices size={15} aria-hidden="true" />
+                <span>{seedIsRandom ? "Random seed" : `Seed ${constraints.seed}`}</span>
+              </button>
+              {openMenu === "seed" && (
+                <div className="popover images-popover" role="dialog" aria-label="Seed">
+                  <div className="field">
+                    <span className="field-label">Seed</span>
+                    <div className="segmented">
                       <button
                         type="button"
-                        role="menuitem"
-                        className="chat-model-menu-item"
+                        className="segmented-item"
+                        aria-pressed={seedIsRandom}
+                        onClick={() => updateConstraint("seed", -1)}
+                      >
+                        Random
+                      </button>
+                      <button
+                        type="button"
+                        className="segmented-item"
+                        aria-pressed={!seedIsRandom}
                         onClick={() => {
-                          setOpenMenu(null);
-                          setActiveTab?.("models");
+                          if (seedIsRandom) updateConstraint("seed", Math.floor(Math.random() * 2147483647));
                         }}
                       >
-                        Manage models
+                        Fixed
                       </button>
+                    </div>
+                  </div>
+                  {!seedIsRandom && (
+                    <div className="field">
+                      <label className="field-label" htmlFor="images-seed">Seed number</label>
+                      <input
+                        id="images-seed"
+                        type="number"
+                        className="images-input"
+                        value={constraints.seed}
+                        onChange={(e) => updateConstraint("seed", parseInt(e.target.value) || -1)}
+                      />
+                      <div className="field-hint">The same seed and prompt give the same image.</div>
                     </div>
                   )}
                 </div>
-
-                {isGenerating && !isCancelling ? (
-                  <button
-                    type="button"
-                    className="chat-composer-stop-btn"
-                    onClick={handleCancelGeneration}
-                    aria-label="Stop generating"
-                    title="Stop generating"
-                  >
-                    <Square size={14} fill="currentColor" aria-hidden="true" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="chat-composer-send-btn"
-                    onClick={submit}
-                    disabled={!canGenerate}
-                    aria-label={baseImage ? "Generate from base image" : "Generate image"}
-                    title={!activeModel ? "Choose an image model first" : baseImage ? "Generate from base image" : "Generate image"}
-                  >
-                    <ArrowUp size={18} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
+              )}
             </div>
+
+            {/* More */}
+            <div className="images-menu-anchor">
+              <button
+                type="button"
+                className={`chat-composer-chip ${negativePrompt?.trim() ? "images-chip-set" : ""}`}
+                onClick={() => toggleMenu("more")}
+                aria-haspopup="dialog"
+                aria-expanded={openMenu === "more"}
+              >
+                <SlidersHorizontal size={15} aria-hidden="true" />
+                <span>More</span>
+              </button>
+              {openMenu === "more" && (
+                <div className="popover images-popover images-popover-wide" role="dialog" aria-label="More settings">
+                  <div className="field">
+                    <label className="field-label" htmlFor="images-negative">Negative prompt</label>
+                    <textarea
+                      id="images-negative"
+                      className="images-input images-textarea"
+                      value={negativePrompt}
+                      onChange={(e) => setNegativePrompt(e.target.value)}
+                      placeholder="Things to avoid, such as blurry, text, watermark"
+                      disabled={isBusy}
+                      rows={3}
+                    />
+                  </div>
+                  <div className="images-field-row">
+                    <div className="field">
+                      <label className="field-label" htmlFor="images-sampler">Sampler</label>
+                      <select
+                        id="images-sampler"
+                        className="images-input"
+                        value={constraints.sampler}
+                        onChange={(e) => updateConstraint("sampler", e.target.value)}
+                        disabled={isBusy}
+                      >
+                        {(SAMPLERS.includes(constraints.sampler) ? SAMPLERS : [constraints.sampler, ...SAMPLERS]).map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label className="field-label" htmlFor="images-cfg">CFG scale</label>
+                      <input
+                        id="images-cfg"
+                        type="number"
+                        className="images-input"
+                        min="1"
+                        max="30"
+                        step="0.5"
+                        value={constraints.cfgScale}
+                        onChange={(e) => handleCfgChange(e.target.value)}
+                        disabled={isBusy}
+                      />
+                    </div>
+                  </div>
+                  <div className="field-hint">How closely the image follows the prompt. Fast models work best near 1.</div>
+                  <button
+                    type="button"
+                    className="btn images-popover-link"
+                    onClick={() => {
+                      setOpenMenu(null);
+                      setActiveTab?.("settings");
+                    }}
+                  >
+                    Hardware and backend settings
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="chat-composer-toolbar-right">
+            <div className="chat-model-picker">
+              <button
+                type="button"
+                className={`chat-model-trigger ${openMenu === "model" ? "active" : ""}`}
+                onClick={() => toggleMenu("model")}
+                disabled={isBusy}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "model"}
+                title={activeModel || "Choose an image model"}
+              >
+                {backendReady && <span className="chat-model-dot" aria-hidden="true" />}
+                <span className="chat-model-trigger-label">{modelLabel}</span>
+                <ChevronDown size={15} aria-hidden="true" />
+              </button>
+              {openMenu === "model" && (
+                <div className="chat-model-menu" role="menu">
+                  <div className="chat-model-menu-label">Image models</div>
+                  {imageModels === null && (
+                    <div className="chat-model-menu-item images-menu-static">
+                      <span className="chat-model-menu-name">Looking for models…</span>
+                    </div>
+                  )}
+                  {imageModels?.length === 0 && (
+                    <div className="chat-model-menu-item images-menu-static">
+                      <span className="chat-model-menu-name">No image models yet</span>
+                    </div>
+                  )}
+                  {imageModels?.map((model) => {
+                    const isSelected = activeModel === model.filename;
+                    return (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        key={model.filename}
+                        className={`chat-model-menu-item ${isSelected ? "selected" : ""}`}
+                        title={model.filename}
+                        onClick={() => handlePickModel(model)}
+                      >
+                        <span className="chat-model-menu-name">{modelDisplayName(model.filename)}</span>
+                        {isSelected && backendReady && <span className="chat-model-menu-badge">Loaded</span>}
+                      </button>
+                    );
+                  })}
+                  <div className="chat-model-menu-divider" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="chat-model-menu-item"
+                    onClick={() => {
+                      setOpenMenu(null);
+                      setActiveTab?.("models");
+                    }}
+                  >
+                    Manage models
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isGenerating && !isCancelling ? (
+              <button
+                type="button"
+                className="chat-composer-stop-btn"
+                onClick={handleCancelGeneration}
+                aria-label="Stop generating"
+                title="Stop generating"
+              >
+                <Square size={14} fill="currentColor" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="chat-composer-send-btn"
+                onClick={submit}
+                disabled={!canGenerate}
+                aria-label={baseImage ? "Generate from base image" : "Generate image"}
+                title={!activeModel ? "Choose an image model first" : baseImage ? "Generate from base image" : "Generate image"}
+              >
+                <ArrowUp size={18} aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
       </div>
+    </div>
+  );
+
+  return (
+    <div className={`page images-page ${showHistory ? "has-history" : ""}`}>
+      <div className="images-main">
+        {stageItem && !isBusy && (
+          <button type="button" className="btn images-back" onClick={() => setStageUrl(null)}>
+            <LayoutGrid size={15} aria-hidden="true" />
+            <span>All images</span>
+          </button>
+        )}
+        {imageCount > 0 && !stageEmpty && !showHistory && (
+          <button
+            type="button"
+            className="icon-btn images-history-open"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Show history"
+            title="Show history"
+          >
+            <PanelRightOpen size={18} aria-hidden="true" />
+          </button>
+        )}
+
+        <div className="page-scroll images-stage-scroll">
+          <div className={`page-column images-stage-column ${stageEmpty ? "is-empty" : ""}`}>
+            {errorMsg && !isBusy && (
+              <div className="images-error" role="alert">
+                <AlertTriangle size={16} aria-hidden="true" />
+                <div className="images-error-text">
+                  <div>{errorMsg}</div>
+                  {textModelBlocking ? (
+                    <button type="button" className="btn images-error-action" onClick={handleUnloadTextAndGenerate}>
+                      Unload text model and generate
+                    </button>
+                  ) : (
+                    <div className="images-error-hint">If this keeps happening, try a smaller size such as 512×512.</div>
+                  )}
+                </div>
+                <button type="button" className="icon-btn" onClick={() => setErrorMsg(null)} aria-label="Dismiss error">
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+
+            {stageEmpty ? (
+              <>
+                <div className="images-hero">
+                  <h1 className="images-hero-title">What should we imagine?</h1>
+                  {composer}
+                </div>
+                {imageCount > 0 && (
+                  <>
+                    <div className="images-grid-bar" onKeyDown={(e) => { if (e.key === "Escape") exitSelectMode(); }}>
+                      {selectMode ? (
+                        <>
+                          <span className="images-grid-count" aria-live="polite">
+                            {selectedUrls.length === 0 ? "Select images" : `${selectedUrls.length} selected`}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => setSelectedUrls(selectedUrls.length === imageCount ? [] : generatedImages.map((img) => img.url))}
+                          >
+                            {selectedUrls.length === imageCount ? "Select none" : "Select all"}
+                          </button>
+                          <button type="button" className="btn" onClick={downloadSelected} disabled={selectedUrls.length === 0}>
+                            <Download size={15} aria-hidden="true" />
+                            <span>Download</span>
+                          </button>
+                          <button type="button" className="btn btn-danger" onClick={deleteSelected} disabled={selectedUrls.length === 0}>
+                            <Trash2 size={15} aria-hidden="true" />
+                            <span>Delete</span>
+                          </button>
+                          <button type="button" className="btn" onClick={exitSelectMode}>Done</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="images-grid-count">{imageCount} image{imageCount === 1 ? "" : "s"}</span>
+                          <button type="button" className="btn" onClick={() => setSelectMode(true)}>
+                            <CheckSquare size={15} aria-hidden="true" />
+                            <span>Select</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    <div className={`images-grid ${selectMode ? "selecting" : ""}`} aria-label="Your images">
+                      {generatedImages.map((img) => {
+                        const selected = selectedUrls.includes(img.url);
+                        return (
+                          <div key={img.image || img.url} className={`images-tile ${selected ? "selected" : ""}`}>
+                            <button
+                              type="button"
+                              className="images-tile-open"
+                              onClick={(e) => handleTileClick(img, e)}
+                              aria-label={selectMode
+                                ? `${selected ? "Deselect" : "Select"} image${img.prompt ? `: ${img.prompt}` : ""}`
+                                : img.prompt ? `Show image: ${img.prompt}` : "Show image"}
+                              aria-pressed={selectMode ? selected : undefined}
+                            >
+                              <img src={img.url} className="images-tile-img" alt="" loading="lazy" decoding="async" />
+                              {img.prompt && <span className="images-tile-caption" aria-hidden="true">{img.prompt}</span>}
+                            </button>
+                            <button
+                              type="button"
+                              className="images-tile-check"
+                              onClick={() => toggleSelected(img.url)}
+                              aria-label={selected ? "Deselect image" : "Select image"}
+                              aria-pressed={selected}
+                              tabIndex={selectMode ? -1 : 0}
+                            >
+                              {selected && <Check size={14} aria-hidden="true" />}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : isBusy ? (
+              progressTile
+            ) : (
+              <figure className="images-stage">
+                <button
+                  type="button"
+                  className="images-stage-frame"
+                  onClick={(e) => openViewer(stageItem.url, e.currentTarget)}
+                  aria-label="Open full screen"
+                  title="Open full screen"
+                >
+                  <img src={stageItem.url} alt={stageItem.prompt || "Generated image"} className="images-stage-img" />
+                </button>
+                <figcaption className="images-stage-caption">
+                  {stageItem.prompt && <p className="images-stage-prompt">{stageItem.prompt}</p>}
+                  <p className="images-stage-meta">{itemMeta(stageItem)}</p>
+                </figcaption>
+                <div className="images-stage-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => downloadImageUrl(stageItem.url, `diffusion-${stageItem.seed ?? Date.now()}.png`)}
+                  >
+                    <Download size={15} aria-hidden="true" />
+                    <span>Download</span>
+                  </button>
+                  <button type="button" className="btn" onClick={() => copyImageUrl(stageItem.url)}>
+                    {copySuccess ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                    <span>{copySuccess ? "Copied" : "Copy"}</span>
+                  </button>
+                  <button type="button" className="btn" onClick={() => reuseFromViewer(stageItem)}>
+                    <RefreshCw size={15} aria-hidden="true" />
+                    <span>Reuse prompt</span>
+                  </button>
+                  {!isNpuBackend && (
+                    <button type="button" className="btn" onClick={() => applyAsBaseImage(stageItem)} disabled={isBusy}>
+                      <ImagePlus size={15} aria-hidden="true" />
+                      <span>Use as base</span>
+                    </button>
+                  )}
+                  <button type="button" className="btn btn-danger" onClick={() => deleteStageItem(stageItem)}>
+                    <Trash2 size={15} aria-hidden="true" />
+                    <span>Delete</span>
+                  </button>
+                </div>
+              </figure>
+            )}
+          </div>
+        </div>
+
+        {!stageEmpty && <div className="page-dock">{composer}</div>}
+      </div>
+
+      {showHistory && (
+        <aside
+          className={`images-history ${historyResizing ? "resizing" : ""}`}
+          style={{ "--history-width": `${historyWidth}px` }}
+          aria-label="Image history"
+        >
+          <div
+            className="images-history-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize history"
+            aria-valuemin={HISTORY_MIN}
+            aria-valuemax={HISTORY_MAX}
+            aria-valuenow={historyWidth}
+            tabIndex={0}
+            title="Drag to resize, double-click to reset"
+            onPointerDown={startHistoryResize}
+            onDoubleClick={() => setHistoryWidth(HISTORY_SMALL)}
+            onKeyDown={resizeHistoryWithKeys}
+          />
+          <div className="images-history-head">
+            <h2 className="images-history-title">History</h2>
+            <span className="images-history-count">{imageCount}</span>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setHistoryWidth(historyIsWide ? HISTORY_SMALL : HISTORY_WIDE)}
+              aria-label={historyIsWide ? "Make history smaller" : "Make history wider"}
+              title={historyIsWide ? "Smaller" : "Wider"}
+            >
+              {historyIsWide ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setHistoryOpen(false)}
+              aria-label="Hide history"
+              title="Hide history"
+            >
+              <PanelRightClose size={18} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="images-history-scroll" onKeyDown={handleHistoryKeyDown}>
+            {historyGroups.map((group) => (
+              <section key={group.label} className="images-history-group">
+                <h3 className="images-history-label">{group.label}</h3>
+                <div className="images-history-grid">
+                  {group.items.map((img) => (
+                    <button
+                      key={img.image || img.url}
+                      type="button"
+                      className={`images-history-item ${img.url === stageUrl ? "current" : ""}`}
+                      onClick={() => setStageUrl(img.url)}
+                      aria-label={img.prompt ? `Show image: ${img.prompt}` : "Show image"}
+                      aria-current={img.url === stageUrl ? "true" : undefined}
+                      data-url={img.url}
+                      title={img.prompt || undefined}
+                    >
+                      <img src={img.url} alt="" loading="lazy" decoding="async" />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </aside>
+      )}
 
       {viewerItem && (
         <div className="images-viewer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) closeViewer(); }}>
@@ -1557,13 +1843,7 @@ function Generator({
             <div className="images-viewer-info">
               {viewerItem.prompt && <p className="images-viewer-prompt">{viewerItem.prompt}</p>}
               <div className="images-viewer-meta">
-                {[
-                  viewerItem.width && viewerItem.height ? `${viewerItem.width}×${viewerItem.height}` : null,
-                  viewerItem.steps ? `${viewerItem.steps} steps` : null,
-                  viewerItem.seed !== undefined && viewerItem.seed !== null ? `Seed ${viewerItem.seed}` : null,
-                  viewerItem.duration_sec ? `${Number(viewerItem.duration_sec).toFixed(1)}s` : null,
-                  viewerItem.model ? modelDisplayName(viewerItem.model) : null,
-                ].filter(Boolean).join(" · ")}
+                {itemMeta(viewerItem)}
               </div>
             </div>
 
