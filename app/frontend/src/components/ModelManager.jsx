@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect, useCallback } from "react";
-import { FolderOpen, DownloadCloud, Loader2, Trash2, Square, AlertTriangle, Search, X, Link } from "lucide-react";
+import { FolderOpen, DownloadCloud, Loader2, Trash2, Square, AlertTriangle, Search, X, Link, Link2, HardDrive, Copy, Plus, MoreHorizontal, ExternalLink, Check } from "lucide-react";
 import "../styles/models.css";
 import { 
   listLocalModels, 
@@ -36,9 +36,79 @@ import {
   downloadTtsModel,
   deleteTtsModel,
   importTtsModel,
+  linkModelFile,
+  moveModelFile,
+  pickModelFile,
   getTtsStatus,
   isLocalServerMode
 } from "../services/api";
+
+const kindLabel = (kind) => ({ image: "Image", text: "Text", speech: "Speech", tts: "Voice" }[kind] || "Other");
+
+// "/Users/me/Downloads/Models/x.safetensors" -> "~/Downloads/Models"; keeps link labels short
+function shortPath(fullPath) {
+  const folder = String(fullPath || "").replace(/[\\/][^\\/]*$/, "");
+  return folder.replace(/^\/Users\/[^/]+/, "~").replace(/^[A-Z]:\\Users\\[^\\]+/i, "~") || folder;
+}
+
+// ---- Readable model names ----
+// "realisticVisionV60B1_v51HyperVAE.safetensors" -> "Realistic Vision V60B1 V51" plus details
+// "Hyper · VAE included". Precision, quantization and baked-in extras move to the meta line.
+const MODEL_DETAIL_WORDS = {
+  fp16: "FP16",
+  fp32: "FP32",
+  bf16: "BF16",
+  vae: "VAE included",
+  hyper: "Hyper",
+  lightning: "Lightning",
+  turbo: "Turbo",
+  pruned: "Pruned",
+  onnx: "ONNX",
+  ema: null,
+  emaonly: null,
+};
+
+function describeModelFile(filename, fallbackName) {
+  const base = String(filename || "").replace(/\.(safetensors|ckpt|gguf|bin|json|onnx|pt|pth)$/i, "");
+  const details = [];
+  let rest = base;
+  // "mmproj-..." files are the vision add-on that lets a text model read images
+  if (/^mmproj[-_]/i.test(rest)) {
+    details.push("Vision add-on");
+    rest = rest.replace(/^mmproj[-_]/i, "");
+  }
+  const quant = rest.match(/(?:^|[-_.])((?:I?Q\d+(?:_[A-Z0-9]+)*)|F16|F32)$/i);
+  if (quant) {
+    details.push(quant[1].toUpperCase());
+    rest = rest.slice(0, quant.index);
+  }
+  const words = [];
+  rest.split(/[-_\s]+/).filter(Boolean).forEach((token) => {
+    // Split camelCase only in names written that way ("realisticVision"), not "CyberRealistic"
+    // and keep version codes like "V60B1" together
+    const parts = /^[a-z]/.test(token)
+      ? token
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/(\d)([A-Z][a-z])/g, "$1 $2")
+        .replace(/([a-z\d])(VAE|FP16|FP32|BF16)$/, "$1 $2")
+        .split(" ")
+      : [token];
+    parts.forEach((part) => {
+      const key = part.toLowerCase();
+      if (key in MODEL_DETAIL_WORDS) {
+        const label = MODEL_DETAIL_WORDS[key];
+        if (label && !details.includes(label)) details.push(label);
+        return;
+      }
+      words.push(/^[a-z]/.test(part) ? part[0].toUpperCase() + part.slice(1) : part);
+    });
+  });
+  const cleanFallback = fallbackName && fallbackName !== filename && !/\.(safetensors|ckpt|gguf|bin|json)$/i.test(fallbackName)
+    ? fallbackName
+    : "";
+  return { title: cleanFallback || words.join(" ") || base || "Untitled model", details: cleanFallback ? [] : details };
+}
+
 
 const MODEL_FILTERS = [
   { id: "vision", label: "Vision" },
@@ -345,6 +415,15 @@ function ModelManager({
   const [hasMoreModels, setHasMoreModels] = useState(false);
   const [isLoadingMoreModels, setIsLoadingMoreModels] = useState(false);
   const searchRequestRef = React.useRef(0);
+  // "Add model" opens the URL / import form; rowMenu is the filename whose "..." menu is open
+  const [addOpen, setAddOpen] = useState(false);
+  // How the add panel adds a model: "link" (download URL), "inplace" (use a file where it is), "import" (copy)
+  const [addMethod, setAddMethod] = useState("link");
+  const [linkPath, setLinkPath] = useState("");
+  const [isLinking, setIsLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [isPicking, setIsPicking] = useState(false);
+  const [rowMenu, setRowMenu] = useState(null);
   const pendingCompanionDownloadRef = React.useRef(null);
 
   const cancelLoadRef = React.useRef(false);
@@ -1341,6 +1420,59 @@ function ModelManager({
     }
     e.target.value = "";
   };
+
+  const [movingModel, setMovingModel] = useState(null);
+
+  const handleMoveModel = async (filename, to) => {
+    setMovingModel(filename);
+    try {
+      await moveModelFile(filename, activeModelType, to);
+      setActiveModelType(to);
+      await fetchModels();
+    } catch (err) {
+      showAlert?.({ title: "Couldn't move the model", message: err.message || String(err), danger: true });
+    } finally {
+      setMovingModel(null);
+    }
+  };
+
+  const handleBrowseForFile = async () => {
+    setIsPicking(true);
+    setLinkError("");
+    try {
+      const picked = await pickModelFile(activeModelType);
+      if (picked) setLinkPath(picked);
+    } catch (err) {
+      setLinkError(err.message || String(err));
+    } finally {
+      setIsPicking(false);
+    }
+  };
+
+  const handleLinkSubmit = async (event) => {
+    event.preventDefault();
+    if (!linkPath.trim() || isLinking) return;
+    setIsLinking(true);
+    setLinkError("");
+    try {
+      const result = await linkModelFile(linkPath.trim(), activeModelType);
+      setLinkPath("");
+      setAddOpen(false);
+      setModelSearch("");
+      // The server files it by what the file really is; follow it to that tab
+      const placedElsewhere = result.kind && result.kind !== activeModelType;
+      if (placedElsewhere) setActiveModelType(result.kind);
+      await fetchModels();
+      showAlert?.({
+        title: placedElsewhere ? `Added as ${kindLabel(result.kind).toLowerCase()} model` : "Model added",
+        message: `${placedElsewhere ? `This file is ${/^[aeiou]/i.test(result.kind) ? "an" : "a"} ${result.kind} model${result.detail ? ` (${result.detail})` : ""}, so it was added to ${kindLabel(result.kind)} models. ` : ""}It stays at ${result.linkedFrom} and uses no extra space. Don't move or delete that file.`,
+      });
+    } catch (err) {
+      setLinkError(err.message || String(err));
+    } finally {
+      setIsLinking(false);
+    }
+  };
   const isUrlDownloading = Boolean(downloadingModelId);
   const fileInputRef = React.useRef(null);
 
@@ -1366,13 +1498,15 @@ function ModelManager({
 
   const typeNoun = activeModelType === "tts" ? "voice" : activeModelType;
   const importAccept = activeModelType === "image" ? ".safetensors,.ckpt" : activeModelType === "text" ? ".gguf" : activeModelType === "speech" ? ".bin" : ".json";
-  const importHint = activeModelType === "image"
-    ? "Paste a link to a .safetensors file, or import .safetensors / .ckpt weights."
-    : activeModelType === "text"
-    ? "Paste a link to a .gguf file, or import .gguf weights."
-    : activeModelType === "speech"
-    ? "Paste a link to a whisper.cpp .bin file, or import one."
-    : "Paste a link to a Kokoro manifest, or import a .json manifest.";
+  const fileTypesLabel = activeModelType === "image" ? ".safetensors or .ckpt" : activeModelType === "text" ? ".gguf" : activeModelType === "speech" ? ".bin" : ".json";
+  const canLinkInPlace = activeModelType !== "tts";
+  const isMacClient = typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent || navigator.platform || "");
+  const ADD_METHODS = [
+    { id: "link", label: "Download from a link", desc: "Paste a Hugging Face URL", Icon: DownloadCloud },
+    ...(canLinkInPlace ? [{ id: "inplace", label: "Use a file where it is", desc: "No copy, no extra space", Icon: HardDrive }] : []),
+    { id: "import", label: "Import a copy", desc: "Copies it into the app", Icon: Copy },
+  ];
+  const currentAddMethod = ADD_METHODS.some((method) => method.id === addMethod) ? addMethod : "link";
 
   const isModelActive = (filename) => (
     activeModelType === "image" ? activeModel === filename
@@ -1512,29 +1646,66 @@ function ModelManager({
     ? "Install Kokoro from the library below, or import a .json manifest."
     : "Download one from the library below, or import a file.";
 
+  // Close the row "..." menu on an outside click or Escape
+  useEffect(() => {
+    if (!rowMenu) return undefined;
+    const onDown = (event) => {
+      if (!event.target.closest?.(".models-row-menu")) setRowMenu(null);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") setRowMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [rowMenu]);
+
+  // The add panel stays open while its download or import is running so progress stays visible
+  const urlDownloadRunning = isUrlDownloading && !libraryDownloadVisible;
+  const addPanelVisible = addOpen || urlDownloadRunning || importProgress !== null;
+
+  // Generic labels ("Weights file", "GGUF") add noise; keep the ones that say something
+  const localDetailLabel = (model) => {
+    if (activeModelType === "speech" || activeModelType === "tts") return null; // their names already say it
+    const label = getLocalFormatLabel(model);
+    return /weights file|^gguf$/i.test(label) ? null : label;
+  };
+
   return (
     <div className="page models-page">
       <div className="page-scroll">
         <div className="page-column">
           <header className="page-header models-header">
-            <div>
-              <h1 className="page-title">Models</h1>
-              <p className="page-subtitle">Download and manage the models that run on this computer.</p>
-            </div>
-            <div className="search-field models-search">
-              <Search size={16} aria-hidden="true" />
-              <input
-                type="search"
-                value={modelSearch}
-                onChange={(event) => setModelSearch(event.target.value)}
-                placeholder={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
-                aria-label={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
-              />
-              {modelSearch && (
-                <button type="button" className="models-search-clear" onClick={() => setModelSearch("")} aria-label="Clear search">
-                  <X size={14} aria-hidden="true" />
-                </button>
-              )}
+            <h1 className="page-title">Models</h1>
+            <div className="models-header-tools">
+              <div className="search-field models-search">
+                <Search size={16} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                  placeholder={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
+                  aria-label={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
+                />
+                {modelSearch && (
+                  <button type="button" className="models-search-clear" onClick={() => setModelSearch("")} aria-label="Clear search">
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary models-add-btn"
+                onClick={() => setAddOpen((open) => !open)}
+                aria-expanded={addPanelVisible}
+                aria-controls="models-add-panel"
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>Add model</span>
+              </button>
             </div>
           </header>
 
@@ -1558,6 +1729,159 @@ function ModelManager({
             })}
           </div>
 
+          {/* Add from URL or file, opened from the header */}
+          {addPanelVisible && (
+            <section id="models-add-panel" className="models-add-panel" aria-label="Add a model">
+              <div className="models-add-head">
+                <h2 className="models-add-title">Add {/^[aeiou]/.test(typeNoun) ? "an" : "a"} {typeNoun} model</h2>
+                {!urlDownloadRunning && importProgress === null && (
+                  <button type="button" className="icon-btn" onClick={() => setAddOpen(false)} aria-label="Close">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <div className="models-add-methods" role="radiogroup" aria-label="How to add the model">
+                {ADD_METHODS.map((method) => {
+                  const MethodIcon = method.Icon;
+                  const selected = currentAddMethod === method.id;
+                  return (
+                    <button
+                      key={method.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className="models-add-method"
+                      onClick={() => {
+                        setAddMethod(method.id);
+                        setLinkError("");
+                      }}
+                    >
+                      <MethodIcon size={18} className="models-add-method-icon" aria-hidden="true" />
+                      <span className="models-add-method-text">
+                        <span className="models-add-method-label">{method.label}</span>
+                        <span className="models-add-method-desc">{method.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {currentAddMethod === "link" && (
+                <>
+                  <form className="models-url-form" onSubmit={handleUrlDownloadSubmit}>
+                    <div className="search-field models-url-field">
+                      <Link size={16} aria-hidden="true" />
+                      <input
+                        type="url"
+                        inputMode="url"
+                        placeholder="Paste a Hugging Face file URL"
+                        aria-label="Model file URL"
+                        value={downloadUrl}
+                        onChange={(e) => setDownloadUrl(e.target.value)}
+                        disabled={isUrlDownloading}
+                      />
+                    </div>
+                    <button type="submit" className="btn" disabled={isUrlDownloading || !downloadUrl.trim()}>
+                      <DownloadCloud size={14} aria-hidden="true" />
+                      <span>Download</span>
+                    </button>
+                  </form>
+                  <p className="field-hint models-add-hint">Works with {fileTypesLabel} files. It is saved to the app's models folder.</p>
+                </>
+              )}
+
+              {currentAddMethod === "inplace" && (
+                <>
+                  <form className="models-url-form" onSubmit={handleLinkSubmit}>
+                    <div className="search-field models-url-field">
+                      <HardDrive size={16} aria-hidden="true" />
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder={isMacClient ? "/Users/you/Models/model.safetensors" : "D:\\Models\\model.safetensors"}
+                        aria-label="Path to the model file"
+                        value={linkPath}
+                        onChange={(e) => {
+                          setLinkPath(e.target.value);
+                          setLinkError("");
+                        }}
+                        disabled={isLinking}
+                      />
+                    </div>
+                    <button type="button" className="btn" onClick={handleBrowseForFile} disabled={isPicking || isLinking}>
+                      {isPicking ? <Loader2 size={14} className="models-spin" aria-hidden="true" /> : <FolderOpen size={14} aria-hidden="true" />}
+                      <span>{isPicking ? "Choosing…" : "Browse…"}</span>
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={isLinking || !linkPath.trim()}>
+                      {isLinking ? <Loader2 size={14} className="models-spin" aria-hidden="true" /> : <Link2 size={14} aria-hidden="true" />}
+                      <span>Use file</span>
+                    </button>
+                  </form>
+                  {linkError ? (
+                    <p className="models-warning models-add-hint" role="alert">{linkError}</p>
+                  ) : (
+                    <p className="field-hint models-add-hint">
+                      {isPicking
+                        ? "Choose the file in the window that opened. It may be behind this one."
+                        : isMacClient
+                        ? "It stays where it is, so don't move or delete it. Tip: in Finder, Option-Command-C copies a file's path."
+                        : "It stays where it is, so don't move or delete it. Tip: Shift-right-click a file and choose Copy as path."}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {currentAddMethod === "import" && (
+                <>
+                  <div className="models-add-row models-import-row">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="models-file-input"
+                      accept={importAccept}
+                      onChange={handleImportFile}
+                      disabled={importProgress !== null}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={importProgress !== null}
+                    >
+                      <FolderOpen size={14} aria-hidden="true" />
+                      <span>Choose file…</span>
+                    </button>
+                    <span className="models-import-note">
+                      A {fileTypesLabel} file is copied into the app, so it keeps working if the original moves. The copy uses disk space.
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {urlDownloadRunning && renderDownloadProgress(downloadingModelId)}
+
+              {importProgress !== null && (
+                <div className="models-inline-panel">
+                  {renderProgress({
+                    label: `Copying ${importInfo.filename}${importInfo.status ? ` · ${importInfo.status}` : ""}`,
+                    value: importProgress,
+                    valueText: `${importProgress}%`,
+                    detail: `${importInfo.speed} MB/s · ${importInfo.eta}s left`,
+                  })}
+                  <div className="models-inline-actions">
+                    <button type="button" className="btn" onClick={handleCancelImport}>
+                      <Square size={14} aria-hidden="true" />
+                      <span>Stop import</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* On this computer */}
           <h2 className="page-section-label models-section-label">
             <span>On this computer</span>
@@ -1568,7 +1892,7 @@ function ModelManager({
             <div className="row-list models-standalone">
               <div className="row-item models-stack-item">
                 <div className="row-item-main">
-                  <div className="row-item-title">{modelLoadProgress.model}</div>
+                  <div className="row-item-title">{describeModelFile(modelLoadProgress.model).title}</div>
                   {renderLoadProgress()}
                 </div>
               </div>
@@ -1593,50 +1917,99 @@ function ModelManager({
                 const filename = model.filename;
                 const isActive = isModelActive(filename);
                 const isLoadingThis = loadingModelId === filename;
-                const sizeLabel = model.size || formatBytes(model.sizeBytes);
+                // Some runtimes put a note in "size"; only show it when it is an actual size
+                const rawSize = model.size || formatBytes(model.sizeBytes);
+                const sizeLabel = /^\s*~?\d/.test(String(rawSize || "")) ? rawSize : null;
+                const info = describeModelFile(filename, model.name);
+                const meta = [
+                  model.missing ? "File not found" : sizeLabel,
+                  ...info.details,
+                  model.linkedFrom ? `Linked from ${shortPath(model.linkedFrom)}` : null,
+                  localDetailLabel(model),
+                  isActive && activeBackendLabel ? `Running on ${activeBackendLabel}` : null,
+                ].filter(Boolean).join(" · ");
+                const menuOpen = rowMenu === filename;
+                // A file whose header says it belongs under another type (a text GGUF on the Image tab)
+                const belongsIn = ["image", "text", "speech"].includes(model.detectedKind) && model.detectedKind !== activeModelType
+                  ? model.detectedKind
+                  : null;
                 return (
-                  <li key={filename} className="row-item models-stack-item">
+                  <li
+                    key={filename}
+                    className={`row-item models-stack-item models-local-row ${isActive ? "is-loaded" : ""} ${isLoadingThis || menuOpen ? "is-engaged" : ""}`}
+                  >
                     <div className="models-row-top">
-                      <div className="row-item-main">
-                        <div className="row-item-title">{filename}</div>
-                        <div className="row-item-meta models-meta">
-                          <span className="tag">{getLocalFormatLabel(model)}</span>
-                          {sizeLabel && <span>{sizeLabel}</span>}
-                          {isActive && activeBackendLabel && <span>Running on {activeBackendLabel}</span>}
+                      <div className="row-item-main" title={model.linkedFrom || filename}>
+                        <div className="models-title-line">
+                          <span className="row-item-title">{info.title}</span>
+                          {isActive && <span className="models-loaded-tag">Loaded</span>}
                         </div>
-                      </div>
-                      <div className="row-item-actions">
-                        {isActive ? (
-                          <>
-                            <span className="tag tag-success">Loaded</span>
-                            <button type="button" className="btn" onClick={() => handleUnloadModel()} disabled={isUnloading}>
-                              {isUnloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
-                              <span>{isUnloading ? "Unloading" : "Unload"}</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
+                        {meta && <div className="row-item-meta models-meta">{meta}</div>}
+                        {belongsIn && (
+                          <div className="models-misplaced" role="note">
+                            <AlertTriangle size={13} aria-hidden="true" />
+                            <span>This is {/^[aeiou]/i.test(belongsIn) ? "an" : "a"} {belongsIn} model, so it won't work here.</span>
                             <button
                               type="button"
-                              className="btn"
-                              onClick={() => handleLoadModel(filename)}
-                              disabled={isBusy}
+                              className="models-link-btn models-misplaced-btn"
+                              onClick={() => handleMoveModel(filename, belongsIn)}
+                              disabled={movingModel === filename || isActive}
                             >
-                              {isLoadingThis && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
-                              <span>{isLoadingThis ? "Loading" : "Load"}</span>
+                              {movingModel === filename && <Loader2 size={13} className="models-spin" aria-hidden="true" />}
+                              <span>Move to {kindLabel(belongsIn)} models</span>
                             </button>
-                            <button
-                              type="button"
-                              className="icon-btn danger"
-                              onClick={() => handleDeleteModel(filename)}
-                              disabled={isBusy}
-                              aria-label={`Delete ${filename}`}
-                              title="Delete from this computer"
-                            >
-                              <Trash2 size={16} aria-hidden="true" />
-                            </button>
-                          </>
+                          </div>
                         )}
+                      </div>
+                      <div className="row-item-actions models-row-actions">
+                        {isActive ? (
+                          <button type="button" className="btn" onClick={() => handleUnloadModel()} disabled={isUnloading}>
+                            {isUnloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                            <span>{isUnloading ? "Unloading" : "Unload"}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => handleLoadModel(filename)}
+                            disabled={isBusy}
+                            aria-label={`Load ${info.title}`}
+                          >
+                            {isLoadingThis && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                            <span>{isLoadingThis ? "Loading" : "Load"}</span>
+                          </button>
+                        )}
+                        <div className="models-row-menu">
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => setRowMenu(menuOpen ? null : filename)}
+                            aria-label={`More actions for ${info.title}`}
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                          >
+                            <MoreHorizontal size={17} aria-hidden="true" />
+                          </button>
+                          {menuOpen && (
+                            <div className="popover models-row-popover" role="menu">
+                              <div className="models-row-popover-file" title={model.linkedFrom || filename}>{model.linkedFrom || filename}</div>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="models-row-popover-item danger"
+                                onClick={() => {
+                                  setRowMenu(null);
+                                  handleDeleteModel(filename);
+                                }}
+                                disabled={isBusy || isActive}
+                                title={isActive ? "Unload it first" : undefined}
+                              >
+                                <Trash2 size={15} aria-hidden="true" />
+                                <span>{model.linkedFrom ? "Remove from app (keeps the file)" : "Delete from this computer"}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     {loadRowId === filename && renderLoadProgress()}
@@ -1654,72 +2027,6 @@ function ModelManager({
               })}
             </ul>
           )}
-
-          {/* Add from URL or file */}
-          <h2 className="page-section-label">Add a model</h2>
-          <div className="row-list">
-            <div className="row-item models-stack-item">
-              <div className="models-add-row">
-                <form className="models-url-form" onSubmit={handleUrlDownloadSubmit}>
-                  <div className="search-field models-url-field">
-                    <Link size={16} aria-hidden="true" />
-                    <input
-                      type="url"
-                      inputMode="url"
-                      placeholder="Paste a Hugging Face file URL"
-                      aria-label="Model file URL"
-                      value={downloadUrl}
-                      onChange={(e) => setDownloadUrl(e.target.value)}
-                      disabled={isUrlDownloading}
-                    />
-                  </div>
-                  <button type="submit" className="btn" disabled={isUrlDownloading || !downloadUrl.trim()}>
-                    <DownloadCloud size={14} aria-hidden="true" />
-                    <span>Download</span>
-                  </button>
-                </form>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="models-file-input"
-                  accept={importAccept}
-                  onChange={handleImportFile}
-                  disabled={importProgress !== null}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                />
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={importProgress !== null}
-                >
-                  <FolderOpen size={14} aria-hidden="true" />
-                  <span>Import file</span>
-                </button>
-              </div>
-              <p className="field-hint models-add-hint">{importHint}</p>
-
-              {isUrlDownloading && !libraryDownloadVisible && renderDownloadProgress(downloadingModelId)}
-
-              {importProgress !== null && (
-                <div className="models-inline-panel">
-                  {renderProgress({
-                    label: `Copying ${importInfo.filename}${importInfo.status ? ` · ${importInfo.status}` : ""}`,
-                    value: importProgress,
-                    valueText: `${importProgress}%`,
-                    detail: `${importInfo.speed} MB/s · ${importInfo.eta}s left`,
-                  })}
-                  <div className="models-inline-actions">
-                    <button type="button" className="btn" onClick={handleCancelImport}>
-                      <Square size={14} aria-hidden="true" />
-                      <span>Stop import</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
 
           {/* Library */}
           <h2 className="page-section-label">Library</h2>
@@ -1773,7 +2080,7 @@ function ModelManager({
                 <div>
                   {activeModelType === "text" && hasHuggingFaceResults
                     ? "Try another search or remove a filter."
-                    : "Try a different name, or paste a download link above."}
+                    : "Try a different name, or add one with a download link."}
                 </div>
               </div>
             </div>
@@ -1782,7 +2089,7 @@ function ModelManager({
           {filteredLibrary.map((section) => (
             <section key={section.group} className="models-group" aria-label={section.group}>
               <h3 className="models-group-label">{section.group}</h3>
-              <ul className="row-list">
+              <ul className="models-library-grid">
                 {section.items.map((model) => {
                   const hasMainModel = modelNames.includes(model.filename);
                   const hasProjector = !model.projectorFilename || allModelNames.includes(model.projectorFilename);
@@ -1798,50 +2105,71 @@ function ModelManager({
                     : model.approxSize
                     ? (/^\d/.test(model.approxSize) ? `~${model.approxSize}` : model.approxSize)
                     : null;
-                  const metaParts = [
-                    model.resolution && model.resolution !== "N/A" ? model.resolution : null,
+                  const meta = [
                     sizeLabel,
-                  ].filter(Boolean);
+                    model.resolution && model.resolution !== "N/A" ? model.resolution : null,
+                    model.format && !/^(safetensors|gguf)$/i.test(model.format) ? model.format : null,
+                  ].filter(Boolean).join(" · ");
+                  const pageLink = model.pageUrl || model.url;
                   return (
-                    <li key={`${model.id || section.group}:${model.filename}`} className="row-item models-stack-item">
-                      <div className="models-row-top">
-                        <div className="row-item-main">
-                          <div className="models-title-line">
-                            <span className="row-item-title">{model.name}</span>
-                            {isRecommended && (
-                              <span className="tag tag-success" title={model.fitReason || `Suited to ${systemTier.toLowerCase()}-tier hardware`}>
-                                {fitLabel}
-                              </span>
-                            )}
-                          </div>
-                          <div className="row-item-meta models-meta">
-                            {model.format && <span className="tag">{model.format}</span>}
-                            {metaParts.length > 0 && <span>{metaParts.join(" · ")}</span>}
-                          </div>
-                          {model.notes && <p className="models-desc">{model.notes}</p>}
-                        </div>
-                        <div className="row-item-actions">
-                          <a
-                            className="models-link-btn"
-                            href={model.pageUrl || model.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {model.pageUrl ? "View on Hugging Face" : "Save to Downloads folder"}
-                          </a>
+                    <li
+                      key={`${model.id || section.group}:${model.filename}`}
+                      className={`models-card ${downloading ? "is-downloading" : ""}`}
+                    >
+                      <div className="models-card-title">
+                        <span>{model.name}</span>
+                        {isRecommended && (
+                          <span
+                            className="models-fit-dot"
+                            role="img"
+                            aria-label={fitLabel}
+                            title={model.fitReason ? `${fitLabel}: ${model.fitReason}` : fitLabel}
+                          />
+                        )}
+                      </div>
+                      {model.notes && <p className="models-card-desc">{model.notes}</p>}
+                      <div className="models-card-foot">
+                        <span className="models-card-meta">{meta}</span>
+                        <div className="models-card-actions">
+                          {pageLink && (
+                            <a
+                              className="icon-btn"
+                              href={pageLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={model.pageUrl ? `View ${model.name} on Hugging Face` : `Open the download link for ${model.name}`}
+                              title={model.pageUrl ? "View on Hugging Face" : "Open download link"}
+                            >
+                              <ExternalLink size={15} aria-hidden="true" />
+                            </a>
+                          )}
                           {installed ? (
-                            <span className="tag">Downloaded</span>
-                          ) : (
+                            <span className="models-card-done">
+                              <Check size={14} aria-hidden="true" />
+                              <span>Downloaded</span>
+                            </span>
+                          ) : needsProjector ? (
                             <button
                               type="button"
-                              className="btn"
+                              className="btn models-card-btn"
                               onClick={() => handleLibraryDownload(model)}
                               disabled={downloadingModelId !== null}
                             >
+                              {downloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                              <span>Get vision file</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="icon-btn models-card-download"
+                              onClick={() => handleLibraryDownload(model)}
+                              disabled={downloadingModelId !== null}
+                              aria-label={downloading ? `Downloading ${model.name}` : `Download ${model.name}`}
+                              title={downloading ? "Downloading" : "Download"}
+                            >
                               {downloading
-                                ? <Loader2 size={14} className="models-spin" aria-hidden="true" />
-                                : <DownloadCloud size={14} aria-hidden="true" />}
-                              <span>{downloading ? "Downloading" : needsProjector ? "Download vision file" : "Download"}</span>
+                                ? <Loader2 size={15} className="models-spin" aria-hidden="true" />
+                                : <DownloadCloud size={15} aria-hidden="true" />}
                             </button>
                           )}
                         </div>
