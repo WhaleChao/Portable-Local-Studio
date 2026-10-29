@@ -643,7 +643,8 @@ function TextChat({
     setIsBusy(true);
 
     const displayTitleText = text || (imageAttachments.length > 0 ? "Sent Image" : "Sent File");
-    const firstTitle = isNew ? (displayTitleText.slice(0, 26) + (displayTitleText.length > 26 ? "..." : "")) : null;
+    // Keep the full first line; the sidebar truncates visually
+    const firstTitle = isNew ? displayTitleText.split("\n")[0].slice(0, 80) : null;
     saveConversationState(convId, nextMessages, selectedModel, firstTitle);
 
     const requestStartedAt = performance.now();

@@ -35,8 +35,9 @@
   --md-sys-color-on-surface: #1d1d1f;
   --md-sys-color-surface-variant: #f0f0f3;
   --md-sys-color-on-surface-variant: #424245;
-  --sidebar-bg: #ebebee;
-  --sidebar-active: #ffffff;
+  --sidebar-bg: #f3f3f4;
+  --sidebar-hover: #eaeaec;
+  --sidebar-active: #e2e2e5;
 
   /* Text description variables (both pass 4.5:1 on canvas and on cards) */
   --md-sys-color-outline: #636366;            /* Used for description texts in JSX */
@@ -78,8 +79,9 @@ html[data-theme="dark"] {
   --md-sys-color-on-surface: #ececec;
   --md-sys-color-surface-variant: #262626;
   --md-sys-color-on-surface-variant: #b4b4b4;
-  --sidebar-bg: #171717;
-  --sidebar-active: #262626;
+  --sidebar-bg: #1a1a1a;
+  --sidebar-hover: #232323;
+  --sidebar-active: #2a2a2a;
 
   /* Text description variables (both pass 4.5:1 on canvas, cards and inputs) */
   --md-sys-color-outline: #a3a3a3;            /* Used for description texts in JSX */
@@ -430,25 +432,8 @@ body {
   overflow: hidden;
 }
 
-.sidebar-logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 12px 28px 12px;
-}
 
-.sidebar-logo-icon {
-  color: var(--md-sys-color-secondary);
-  width: 26px;
-  height: 26px;
-}
 
-.sidebar-logo-text {
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--md-sys-color-on-background);
-}
 
 .nav-list {
   display: flex;
@@ -3746,9 +3731,10 @@ html[data-theme^="dark"] .settings-subsection:hover {
 
 /* ---- Clean Light: shared behavior ---- */
 
-/* --sidebar-bg and --sidebar-active are only tuned for the two Clean themes; every other theme keeps its own surface */
+/* --sidebar-bg, --sidebar-hover and --sidebar-active are only tuned for the two Clean themes; every other theme keeps its own surface */
 html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   --sidebar-bg: var(--md-sys-color-surface);
+  --sidebar-hover: var(--md-sys-color-primary-container);
   --sidebar-active: var(--md-sys-color-primary-container);
 }
 
@@ -3764,72 +3750,126 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   white-space: nowrap;
 }
 
-/* ---- Sidebar (chat-app layout: nav, Recents, device footer) ---- */
+/* ---- Sidebar (chat-app layout). Sizes are in px on purpose: the sidebar keeps its
+   proportions when the user raises the app text size for chats. ---- */
 .sidebar {
   width: 260px;
-  padding: 12px 10px;
-  gap: 2px;
+  padding: 8px 10px 10px;
+  gap: 0;
   justify-content: flex-start;
   box-shadow: none;
+  border-right: 1px solid var(--border-color-muted);
+  font-size: 15px;
+  letter-spacing: -0.005em;
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 4px 12px 8px;
+  height: 48px;
+  padding: 0 0 0 10px;
+  margin-bottom: 8px;
 }
 
-.sidebar .sidebar-logo {
-  padding: 0;
-  gap: 8px;
-  min-width: 0;
-}
-
-.sidebar .sidebar-logo-icon {
-  width: 22px;
-  height: 22px;
+.sidebar-mark {
+  color: var(--md-sys-color-on-surface);
   flex-shrink: 0;
 }
 
-.sidebar .sidebar-logo-text {
-  font-size: 1rem;
-  white-space: nowrap;
+.sidebar-header-actions {
+  display: flex;
+  gap: 2px;
 }
 
 .sidebar-icon-btn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: var(--md-shape-corner-small);
+  border-radius: 10px;
   background: transparent;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
-  transition: background-color var(--md-transition-duration) var(--md-transition-easing);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .sidebar-icon-btn:hover,
 .sidebar-icon-btn.active {
-  background: var(--sidebar-active, var(--md-sys-color-primary-container));
+  background: var(--sidebar-hover, var(--md-sys-color-primary-container));
   color: var(--md-sys-color-on-surface);
 }
 
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  margin: 0 0 8px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: var(--sidebar-hover, var(--md-sys-color-primary-container));
+  color: var(--md-sys-color-outline);
+}
+
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-search input::placeholder {
+  color: var(--md-sys-color-outline);
+}
+
+.sidebar-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.sidebar-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .sidebar .nav-list {
-  gap: 1px;
+  gap: 4px;
   margin-bottom: 0;
 }
 
 .sidebar .nav-item {
-  height: 38px;
+  height: 36px;
   padding: 0 10px;
   gap: 10px;
-  font-size: 0.92rem;
-  font-weight: 500;
-  border-radius: var(--md-shape-corner-small);
+  font-size: 15px;
+  font-weight: 450;
+  border-radius: 12px;
+  color: var(--md-sys-color-on-surface);
+  transition: background-color 0.15s ease;
+}
+
+.sidebar .nav-item svg {
+  flex-shrink: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sidebar .nav-item:hover {
+  background-color: var(--sidebar-hover, var(--md-sys-color-primary-container));
   color: var(--md-sys-color-on-surface);
 }
 
@@ -3837,19 +3877,32 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   background-color: var(--sidebar-active, var(--md-sys-color-primary-container));
   box-shadow: none;
   color: var(--md-sys-color-on-surface);
+  font-weight: 450;
+}
+
+.sidebar .nav-item.active svg {
+  color: var(--md-sys-color-on-surface);
 }
 
 .sidebar-recents {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  margin-top: 16px;
+  margin: 0 -10px;
+  padding: 0 10px;
+}
+
+.sidebar-section {
+  margin-top: 24px;
 }
 
 .sidebar-section-label {
-  padding: 4px 10px 6px;
-  font-size: 0.78rem;
-  font-weight: 500;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 400;
   color: var(--md-sys-color-outline);
 }
 
@@ -3857,40 +3910,34 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
 
 .sidebar-recents-empty {
-  padding: 4px 10px;
-  font-size: 0.82rem;
+  margin-top: 24px;
+  padding: 0 10px;
+  font-size: 14px;
   color: var(--md-sys-color-outline);
 }
 
 .sidebar-history-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
+  gap: 6px;
+  height: 37px;
   padding: 0 4px 0 10px;
-  border-radius: var(--md-shape-corner-small);
-  font-size: 0.88rem;
+  border-radius: 12px;
+  font-size: 15px;
   color: var(--md-sys-color-on-surface);
   cursor: pointer;
-  transition: background-color var(--md-transition-duration) var(--md-transition-easing);
+  transition: background-color 0.15s ease;
 }
 
 .sidebar-history-item:hover {
-  background: var(--md-sys-color-primary-container);
+  background: var(--sidebar-hover, var(--md-sys-color-primary-container));
 }
 
 .sidebar-history-item.active {
   background: var(--sidebar-active, var(--md-sys-color-primary-container));
-  font-weight: 500;
-}
-
-.sidebar-history-icon {
-  flex-shrink: 0;
-  color: var(--md-sys-color-outline);
 }
 
 .sidebar-history-title {
@@ -3903,29 +3950,42 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
 
 .sidebar .sidebar-history-delete {
   flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--md-sys-color-outline);
   cursor: pointer;
   opacity: 0;
 }
 
-.sidebar-history-item.active .sidebar-history-delete {
-  opacity: 0.8;
+.sidebar .sidebar-history-delete:hover {
+  background: var(--sidebar-active, var(--md-sys-color-primary-container)) !important;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border-color-muted);
 }
 
 .sidebar-device {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 8px;
-  padding: 10px 2px 2px 4px;
-  border-top: 1px solid var(--border-color-muted);
+  height: 44px;
+  padding: 0 10px 0 6px;
 }
 
-.sidebar-device-icon {
-  width: 32px;
-  height: 32px;
+.sidebar-device-avatar {
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -3933,29 +3993,24 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   border-radius: 50%;
   background: var(--sidebar-active, var(--md-sys-color-primary-container));
   color: var(--md-sys-color-on-surface);
-}
-
-.sidebar-device-info {
-  flex: 1;
-  min-width: 0;
-  line-height: 1.3;
-}
-
-.sidebar-device-name,
-.sidebar-device-stats {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .sidebar-device-name {
-  font-size: 0.88rem;
-  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
   color: var(--md-sys-color-on-surface);
 }
 
 .sidebar-device-stats {
-  font-size: 0.75rem;
+  flex-shrink: 0;
+  font-size: 12px;
   color: var(--md-sys-color-outline);
   font-variant-numeric: tabular-nums;
 }

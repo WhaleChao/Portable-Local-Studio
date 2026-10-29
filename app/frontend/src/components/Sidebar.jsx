@@ -1,5 +1,7 @@
-import React, { memo, useMemo } from "react";
-import { Image, Box, MessageSquare, Mic, Settings, Shield, Trash2, Volume2, SquarePen, PanelLeftClose, Cpu } from "lucide-react";
+import React, { memo, useMemo, useRef, useState, useEffect } from "react";
+import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, Aperture } from "lucide-react";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function formatGb(value) {
   const number = Number(value);
@@ -12,6 +14,34 @@ function toTime(value) {
   return Number.isNaN(time) ? 0 : time;
 }
 
+// Turns saved file names into readable titles:
+// "tts-2026-06-26T14-30-13.wav" -> "Recording, Jun 26, 2:30 PM"; "meeting-recording.wav" -> "Meeting recording"
+function friendlyFileTitle(name) {
+  if (!name) return "";
+  const base = String(name).replace(/\.(wav|mp3|m4a|ogg|flac|webm|txt|json)$/i, "");
+  const stamp = base.match(/^[a-z]+-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/i);
+  if (stamp) {
+    const [, , month, day, hour, minute] = stamp;
+    const h = Number(hour);
+    const time = `${h % 12 || 12}:${minute} ${h < 12 ? "AM" : "PM"}`;
+    return `Recording, ${MONTHS[Number(month) - 1]} ${Number(day)}, ${time}`;
+  }
+  const words = base.replace(/[-_]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Older chats were saved with titles cut at 26 characters plus "..."; rebuild them from the first message
+function chatTitle(conv) {
+  const title = conv.title || "";
+  if (!title.endsWith("...")) return title || "Chat";
+  const first = (conv.messages || []).find((m) => m.role === "user");
+  const content = Array.isArray(first?.content)
+    ? first.content.find((part) => part.type === "text")?.text
+    : first?.content;
+  const text = typeof content === "string" ? content.trim().split("\n")[0] : "";
+  return text || title.slice(0, -3);
+}
+
 // Lets div-based rows respond to Enter/Space like real buttons (ignores keys from nested buttons)
 function activateOnKey(e) {
   if (e.target !== e.currentTarget) return;
@@ -21,7 +51,43 @@ function activateOnKey(e) {
   }
 }
 
-const RECENT_ICONS = { chat: MessageSquare, speech: Mic, tts: Volume2 };
+function RecentSection({ label, items }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="sidebar-section">
+      <h2 className="sidebar-section-label">{label}</h2>
+      <ul className="sidebar-recents-list">
+        {items.map((item) => (
+          <li key={item.key}>
+            <div
+              className={`sidebar-history-item ${item.isActive ? "active" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-current={item.isActive ? "page" : undefined}
+              onClick={item.open}
+              onKeyDown={activateOnKey}
+              title={item.title}
+            >
+              <span className="sidebar-history-title">{item.title}</span>
+              <button
+                type="button"
+                className="sidebar-history-delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  item.remove(e);
+                }}
+                aria-label={`${item.deleteLabel}: ${item.title}`}
+                title={item.deleteLabel}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function Sidebar({
   collapsed = false,
@@ -44,15 +110,29 @@ function Sidebar({
   setSelectedTtsOutput,
   onDeleteTtsOutput
 }) {
-  // One list for chats, transcriptions and voice clips, newest first
-  const recents = useMemo(() => {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef(null);
+
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setQuery("");
+  };
+
+  const sections = useMemo(() => {
     const speechId = (item) => item && (item.filename || item.metadata || item.textFile);
     const ttsId = (item) => item && (item.filename || item.metadata || item.audioFile);
+    const needle = query.trim().toLowerCase();
+    const matches = (item) => !needle || item.title.toLowerCase().includes(needle);
+    const newestFirst = (a, b) => b.time - a.time;
 
     const chats = conversations.map((conv) => ({
       key: `chat:${conv.id}`,
-      type: "chat",
-      title: conv.title || "Chat",
+      title: chatTitle(conv),
       time: toTime(conv.timestamp),
       isActive: activeTab === "chat" && activeConversationId === conv.id,
       open: () => {
@@ -63,10 +143,9 @@ function Sidebar({
       deleteLabel: "Delete chat",
     }));
 
-    const speech = speechTranscriptions.map((item) => ({
+    const transcripts = speechTranscriptions.map((item) => ({
       key: `speech:${speechId(item)}`,
-      type: "speech",
-      title: item.displayName || item.sourceFilename || item.textFile || item.filename || "Transcript",
+      title: friendlyFileTitle(item.displayName || item.sourceFilename || item.textFile || item.filename) || "Transcript",
       time: toTime(item.modifiedAt || item.createdAt),
       isActive: activeTab === "speech" && speechId(selectedSpeechTranscript) === speechId(item),
       open: () => {
@@ -79,8 +158,7 @@ function Sidebar({
 
     const voice = ttsOutputs.map((item) => ({
       key: `tts:${ttsId(item)}`,
-      type: "tts",
-      title: item.displayName || item.text || item.audioFile || item.filename || "Voice clip",
+      title: item.displayName || item.text || friendlyFileTitle(item.audioFile || item.filename) || "Voice clip",
       time: toTime(item.modifiedAt || item.createdAt),
       isActive: activeTab === "tts" && ttsId(selectedTtsOutput) === ttsId(item),
       open: () => {
@@ -91,9 +169,13 @@ function Sidebar({
       deleteLabel: "Delete voice clip",
     }));
 
-    return [...chats, ...speech, ...voice].sort((a, b) => b.time - a.time);
+    return [
+      { label: "Chats", items: chats.filter(matches).sort(newestFirst) },
+      { label: "Transcriptions", items: transcripts.filter(matches).sort(newestFirst) },
+      { label: "Voice clips", items: voice.filter(matches).sort(newestFirst) },
+    ];
   }, [
-    conversations, speechTranscriptions, ttsOutputs, activeTab, activeConversationId,
+    query, conversations, speechTranscriptions, ttsOutputs, activeTab, activeConversationId,
     selectedSpeechTranscript, selectedTtsOutput, setActiveTab, setActiveConversationId,
     setSelectedSpeechTranscript, setSelectedTtsOutput, onDeleteConversation,
     onDeleteSpeechTranscription, onDeleteTtsOutput
@@ -102,25 +184,54 @@ function Sidebar({
   const navItems = [
     { tab: "generator", label: "Images", Icon: Image },
     { tab: "speech", label: "Transcribe", Icon: Mic },
-    { tab: "tts", label: "Voice", Icon: Volume2 },
+    { tab: "tts", label: "Voice", Icon: AudioLines },
     { tab: "models", label: "Models", Icon: Box },
   ];
 
   const isNewChatActive = activeTab === "chat" && !activeConversationId;
   const deviceName = specs.gpu_name && !specs.gpu_name.startsWith("Loading") ? specs.gpu_name : specs.cpu_name;
-  const cpuUsage = Number(telemetry?.cpu_usage);
+  const hasResults = sections.some((section) => section.items.length > 0);
 
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Sidebar">
       <div className="sidebar-header">
-        <div className="sidebar-logo">
-          <Shield className="sidebar-logo-icon" aria-hidden="true" />
-          <span className="sidebar-logo-text">Local AI Studio</span>
+        <Aperture className="sidebar-mark" size={24} strokeWidth={1.75} aria-label="Local AI Studio" />
+        <div className="sidebar-header-actions">
+          <button
+            type="button"
+            className={`sidebar-icon-btn ${searchOpen ? "active" : ""}`}
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            aria-label="Search history"
+            aria-expanded={searchOpen}
+            title="Search history"
+          >
+            <Search size={20} />
+          </button>
+          <button type="button" className="sidebar-icon-btn" onClick={onToggleSidebar} aria-label="Close sidebar" title="Close sidebar">
+            <PanelLeftClose size={20} />
+          </button>
         </div>
-        <button type="button" className="sidebar-icon-btn" onClick={onToggleSidebar} aria-label="Close sidebar" title="Close sidebar">
-          <PanelLeftClose size={18} />
-        </button>
       </div>
+
+      {searchOpen && (
+        <div className="sidebar-search">
+          <Search size={16} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && closeSearch()}
+            placeholder="Search chats and recordings"
+            aria-label="Search chats and recordings"
+          />
+          {query && (
+            <button type="button" className="sidebar-search-clear" onClick={() => setQuery("")} aria-label="Clear search">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
 
       <nav className="nav-list" aria-label="Main">
         <div
@@ -131,7 +242,7 @@ function Sidebar({
           onClick={onNewChat}
           onKeyDown={activateOnKey}
         >
-          <SquarePen size={18} aria-hidden="true" />
+          <SquarePen size={20} aria-hidden="true" />
           <span>New chat</span>
         </div>
         {navItems.map(({ tab, label, Icon }) => (
@@ -144,74 +255,44 @@ function Sidebar({
             onClick={() => setActiveTab(tab)}
             onKeyDown={activateOnKey}
           >
-            <Icon size={18} aria-hidden="true" />
+            <Icon size={20} aria-hidden="true" />
             <span>{label}</span>
           </div>
         ))}
       </nav>
 
       <div className="sidebar-recents">
-        <div className="sidebar-section-label" id="sidebar-recents-label">Recents</div>
-        {recents.length === 0 ? (
-          <div className="sidebar-recents-empty">Your chats, transcriptions and voice clips show up here.</div>
-        ) : (
-          <ul className="sidebar-recents-list" aria-labelledby="sidebar-recents-label">
-            {recents.map((item) => {
-              const Icon = RECENT_ICONS[item.type];
-              return (
-                <li key={item.key}>
-                  <div
-                    className={`sidebar-history-item ${item.isActive ? "active" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-current={item.isActive ? "page" : undefined}
-                    onClick={item.open}
-                    onKeyDown={activateOnKey}
-                    title={item.title}
-                  >
-                    <Icon size={14} className="sidebar-history-icon" aria-hidden="true" />
-                    <span className="sidebar-history-title">{item.title}</span>
-                    <button
-                      type="button"
-                      className="sidebar-history-delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        item.remove(e);
-                      }}
-                      aria-label={`${item.deleteLabel}: ${item.title}`}
-                      title={item.deleteLabel}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+        {sections.map((section) => (
+          <RecentSection key={section.label} label={section.label} items={section.items} />
+        ))}
+        {!hasResults && (
+          <p className="sidebar-recents-empty">
+            {query ? "No matches." : "Your chats and recordings will show up here."}
+          </p>
         )}
       </div>
 
-      <div className="sidebar-device">
-        <div className="sidebar-device-icon" aria-hidden="true">
-          <Cpu size={16} />
-        </div>
-        <div className="sidebar-device-info" title={`${specs.cpu_name} · ${specs.gpu_name} · ${specs.os_name}`}>
-          <div className="sidebar-device-name">{deviceName}</div>
-          <div className="sidebar-device-stats">
-            Offline · RAM {formatGb(telemetry?.ram_used_gb)}/{formatGb(telemetry?.ram_total_gb || specs.ram_total_gb)} GB
-            {Number.isFinite(cpuUsage) ? ` · CPU ${Math.round(cpuUsage)}%` : ""}
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`sidebar-icon-btn ${activeTab === "settings" ? "active" : ""}`}
-          onClick={() => setActiveTab("settings")}
-          aria-label="Settings"
+      <div className="sidebar-footer">
+        <div
+          className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
+          role="button"
+          tabIndex={0}
           aria-current={activeTab === "settings" ? "page" : undefined}
-          title="Settings"
+          onClick={() => setActiveTab("settings")}
+          onKeyDown={activateOnKey}
         >
-          <Settings size={18} />
-        </button>
+          <Settings size={20} aria-hidden="true" />
+          <span>Settings</span>
+        </div>
+        <div className="sidebar-device" title={`${specs.cpu_name} · ${specs.gpu_name} · ${specs.os_name}`}>
+          <span className="sidebar-device-avatar" aria-hidden="true">
+            {(deviceName || "PC").replace(/^Apple\s+/i, "").slice(0, 2).toUpperCase()}
+          </span>
+          <span className="sidebar-device-name">{deviceName}</span>
+          <span className="sidebar-device-stats">
+            {formatGb(telemetry?.ram_used_gb)}/{formatGb(telemetry?.ram_total_gb || specs.ram_total_gb)} GB
+          </span>
+        </div>
       </div>
     </aside>
   );
