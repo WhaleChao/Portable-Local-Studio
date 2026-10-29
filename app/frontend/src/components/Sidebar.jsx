@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useRef, useState, useEffect } from "react";
-import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, Aperture } from "lucide-react";
+import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, Aperture, ChevronRight } from "lucide-react";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -51,12 +51,36 @@ function activateOnKey(e) {
   }
 }
 
-function RecentSection({ label, items }) {
+const OPEN_SECTIONS_KEY = "sidebarOpenSections";
+
+function readOpenSections() {
+  try {
+    return JSON.parse(localStorage.getItem(OPEN_SECTIONS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function RecentSection({ id, label, items, isOpen, onToggle }) {
   if (items.length === 0) return null;
+  const listId = `sidebar-section-${id}`;
   return (
     <section className="sidebar-section">
-      <h2 className="sidebar-section-label">{label}</h2>
-      <ul className="sidebar-recents-list">
+      <h2>
+        <button
+          type="button"
+          className="sidebar-section-label"
+          onClick={onToggle}
+          aria-expanded={isOpen}
+          aria-controls={listId}
+        >
+          <span>{label}</span>
+          <span className="sidebar-section-count">{items.length}</span>
+          <ChevronRight size={14} className="sidebar-section-chevron" aria-hidden="true" />
+        </button>
+      </h2>
+      {isOpen && (
+        <ul className="sidebar-recents-list" id={listId}>
         {items.map((item) => (
           <li key={item.key}>
             <div
@@ -85,6 +109,7 @@ function RecentSection({ label, items }) {
           </li>
         ))}
       </ul>
+      )}
     </section>
   );
 }
@@ -113,6 +138,18 @@ function Sidebar({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef(null);
+  // History sections start collapsed; remember which ones the user opened
+  const [openSections, setOpenSections] = useState(readOpenSections);
+
+  const toggleSection = (id) => {
+    setOpenSections((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem(OPEN_SECTIONS_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (searchOpen) searchRef.current?.focus();
@@ -170,9 +207,9 @@ function Sidebar({
     }));
 
     return [
-      { label: "Chats", items: chats.filter(matches).sort(newestFirst) },
-      { label: "Transcriptions", items: transcripts.filter(matches).sort(newestFirst) },
-      { label: "Voice clips", items: voice.filter(matches).sort(newestFirst) },
+      { id: "chats", label: "Chats", items: chats.filter(matches).sort(newestFirst) },
+      { id: "transcriptions", label: "Transcriptions", items: transcripts.filter(matches).sort(newestFirst) },
+      { id: "voice", label: "Voice clips", items: voice.filter(matches).sort(newestFirst) },
     ];
   }, [
     query, conversations, speechTranscriptions, ttsOutputs, activeTab, activeConversationId,
@@ -263,7 +300,14 @@ function Sidebar({
 
       <div className="sidebar-recents">
         {sections.map((section) => (
-          <RecentSection key={section.label} label={section.label} items={section.items} />
+          <RecentSection
+            key={section.id}
+            id={section.id}
+            label={section.label}
+            items={section.items}
+            isOpen={Boolean(query.trim()) || Boolean(openSections[section.id])}
+            onToggle={() => toggleSection(section.id)}
+          />
         ))}
         {!hasResults && (
           <p className="sidebar-recents-empty">

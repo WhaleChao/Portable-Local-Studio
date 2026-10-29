@@ -3893,17 +3893,48 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
 }
 
 .sidebar-section {
+  margin-top: 4px;
+}
+
+.sidebar-section:first-child {
   margin-top: 24px;
 }
 
 .sidebar-section-label {
-  height: 28px;
+  width: 100%;
+  height: 32px;
   display: flex;
   align-items: center;
+  gap: 6px;
   padding: 0 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
   font-size: 14px;
   font-weight: 400;
   color: var(--md-sys-color-outline);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-section-label:hover {
+  background: var(--sidebar-hover, var(--md-sys-color-primary-container));
+  color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-section-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-section-chevron {
+  margin-left: auto;
+  transition: transform 0.15s ease;
+}
+
+.sidebar-section-label[aria-expanded="true"] .sidebar-section-chevron {
+  transform: rotate(90deg);
 }
 
 .sidebar-recents-list {
