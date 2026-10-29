@@ -501,6 +501,9 @@ body {
 }
 
 .text-chat-main {
+  /* Reading column for the thread and its composer: wide enough to use big
+     windows, still narrow enough to keep lines readable */
+  --chat-column: 960px;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -672,7 +675,7 @@ body {
 }
 
 .chat-thread {
-  max-width: 760px;
+  max-width: var(--chat-column);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -808,7 +811,7 @@ body {
 }
 
 .chat-composer-dock .chat-composer {
-  max-width: 760px;
+  max-width: var(--chat-column);
   margin: 0 auto;
 }
 
