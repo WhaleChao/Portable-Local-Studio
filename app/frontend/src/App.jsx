@@ -809,6 +809,7 @@ function App() {
             generationProgress={generationProgress}
             setGenerationProgress={setGenerationProgress}
             setActiveTab={setActiveTab}
+            setActiveModel={setActiveModel}
             showAlert={showAlert}
             showConfirm={showConfirm}
             specs={specs}
