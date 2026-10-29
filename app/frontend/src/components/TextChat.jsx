@@ -1448,10 +1448,12 @@ export function MarkdownRenderer({ content }) {
                 return <hr key={blockIdx} />;
               case "quote":
                 return <blockquote key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</blockquote>;
-              case "p":
+              case "p": {
+                // A lone bold line such as "🧠 **Analysis:**" acts as a section label, so it gets heading spacing
+                const isSectionLabel = block.lines.length === 1 && /^[^\w*]*\*\*[^*]+\*\*:?$/u.test(block.lines[0].trim());
                 // Keep the model's single line breaks (addresses, emails, poems)
                 return (
-                  <p key={blockIdx}>
+                  <p key={blockIdx} className={isSectionLabel ? "md-section-label" : undefined}>
                     {block.lines.map((line, lineIdx) => (
                       <React.Fragment key={lineIdx}>
                         {lineIdx > 0 && <br />}
@@ -1460,6 +1462,7 @@ export function MarkdownRenderer({ content }) {
                     ))}
                   </p>
                 );
+              }
               default:
                 return null;
             }
