@@ -33,6 +33,24 @@ function Sidebar({
   setShowTtsHistory,
   onDeleteTtsOutput
 }) {
+  // Lets div-based rows respond to Enter/Space like real buttons (ignores keys from nested buttons)
+  const activateOnKey = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.currentTarget.click();
+    }
+  };
+
+  const navItemProps = (tab) => ({
+    className: `nav-item ${activeTab === tab ? "active" : ""}`,
+    role: "button",
+    tabIndex: 0,
+    "aria-current": activeTab === tab ? "page" : undefined,
+    onClick: () => setActiveTab(tab),
+    onKeyDown: activateOnKey,
+  });
+
   return (
     <div className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div>
@@ -45,8 +63,7 @@ function Sidebar({
         {/* Sidebar Navigation Links (Material 3 style) */}
         <div className="nav-list">
           <div
-            className={`nav-item ${activeTab === "generator" ? "active" : ""}`}
-            onClick={() => setActiveTab("generator")}
+            {...navItemProps("generator")}
           >
             <Image size={20} />
             <span>Image Generator</span>
@@ -54,8 +71,7 @@ function Sidebar({
 
           <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
             <div
-              className={`nav-item ${activeTab === "chat" ? "active" : ""}`}
-              onClick={() => setActiveTab("chat")}
+              {...navItemProps("chat")}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -81,6 +97,7 @@ function Sidebar({
                 }}
                 className="history-toggle-arrow"
                 title={showHistory ? "Hide Chat History" : "Show Chat History"}
+                aria-expanded={showHistory}
               >
                 {showHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
@@ -130,6 +147,9 @@ function Sidebar({
                           transition: "background 0.2s"
                         }}
                         className="sidebar-history-item"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={activateOnKey}
                         title={conv.title}
                       >
                         <span style={{
@@ -171,8 +191,7 @@ function Sidebar({
 
           <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
             <div
-              className={`nav-item ${activeTab === "speech" ? "active" : ""}`}
-              onClick={() => setActiveTab("speech")}
+              {...navItemProps("speech")}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -198,6 +217,7 @@ function Sidebar({
                 }}
                 className="history-toggle-arrow"
                 title={showSpeechHistory ? "Hide Transcriptions" : "Show Transcriptions"}
+                aria-expanded={showSpeechHistory}
               >
                 {showSpeechHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
@@ -250,6 +270,9 @@ function Sidebar({
                           transition: "background 0.2s"
                         }}
                         className="sidebar-history-item"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={activateOnKey}
                         title={title}
                       >
                         <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
@@ -257,7 +280,7 @@ function Sidebar({
                             {title}
                           </span>
                           {date && (
-                            <span style={{ fontSize: "0.68rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: "0.75rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {date}
                             </span>
                           )}
@@ -292,8 +315,7 @@ function Sidebar({
 
           <div className="nav-item-wrapper" style={{ display: "flex", flexDirection: "column" }}>
             <div
-              className={`nav-item ${activeTab === "tts" ? "active" : ""}`}
-              onClick={() => setActiveTab("tts")}
+              {...navItemProps("tts")}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", boxSizing: "border-box" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -319,6 +341,7 @@ function Sidebar({
                 }}
                 className="history-toggle-arrow"
                 title={showTtsHistory ? "Hide TTS Outputs" : "Show TTS Outputs"}
+                aria-expanded={showTtsHistory}
               >
                 {showTtsHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
@@ -371,6 +394,9 @@ function Sidebar({
                           transition: "background 0.2s"
                         }}
                         className="sidebar-history-item"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={activateOnKey}
                         title={title}
                       >
                         <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
@@ -378,7 +404,7 @@ function Sidebar({
                             {title}
                           </span>
                           {date && (
-                            <span style={{ fontSize: "0.68rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: "0.75rem", opacity: 0.72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {date}
                             </span>
                           )}
@@ -412,16 +438,14 @@ function Sidebar({
           </div>
 
           <div
-            className={`nav-item ${activeTab === "models" ? "active" : ""}`}
-            onClick={() => setActiveTab("models")}
+            {...navItemProps("models")}
           >
             <FolderDown size={20} />
             <span>Model Manager</span>
           </div>
 
           <div
-            className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
-            onClick={() => setActiveTab("settings")}
+            {...navItemProps("settings")}
           >
             <Settings size={20} />
             <span>Settings</span>

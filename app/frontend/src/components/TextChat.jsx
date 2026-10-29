@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown, Globe2, Plus } from "lucide-react";
+import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown, Globe2, Plus, PenLine, Lightbulb, Bug, ListChecks, Zap, FileText } from "lucide-react";
 import {
   getDownloadProgress,
   getLlmStatus,
@@ -979,8 +979,8 @@ function TextChat({
               const percent = Math.min(100, Math.round((used / maxTokens) * 100));
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: "7px" }} title={`Context Used: ${used} / ${maxTokens} tokens`}>
-                  <div style={{ position: "relative", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <svg width="32" height="32" viewBox="0 0 40 40">
+                  <div style={{ position: "relative", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="40" height="40" viewBox="0 0 40 40">
                       <circle cx="20" cy="20" r="16" stroke="var(--border-color)" strokeWidth="3" fill="transparent" />
                       <circle cx="20" cy="20" r="16" stroke="var(--md-sys-color-primary)" strokeWidth="3" fill="transparent"
                         strokeDasharray={2 * Math.PI * 16}
@@ -990,11 +990,11 @@ function TextChat({
                       />
                     </svg>
                     <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontSize: "0.58rem", fontWeight: "700", lineHeight: 1 }}>{percent}%</span>
+                      <span style={{ fontSize: "0.75rem", fontWeight: "700", lineHeight: 1, letterSpacing: "-0.03em" }}>{percent}%</span>
                     </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
-                    <span style={{ fontSize: "0.6rem", color: "var(--md-sys-color-outline)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Context</span>
+                    <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Context</span>
                     <span style={{ fontSize: "0.76rem", fontWeight: "600", color: "var(--md-sys-color-on-surface)" }}>{used} / {maxTokens}</span>
                   </div>
                 </div>
@@ -1058,17 +1058,17 @@ function TextChat({
                   {status.ready && (
                     <div className="chat-suggestions">
                       {[
-                        { icon: "✍️", text: "Write a professional email to reschedule a meeting" },
-                        { icon: "💡", text: "Explain how transformers work in simple terms" },
-                        { icon: "🐛", text: "Help me debug this Python code" },
-                        { icon: "📋", text: "Summarize the key points of a topic" },
+                        { icon: PenLine, text: "Write a professional email to reschedule a meeting" },
+                        { icon: Lightbulb, text: "Explain how transformers work in simple terms" },
+                        { icon: Bug, text: "Help me debug this Python code" },
+                        { icon: ListChecks, text: "Summarize the key points of a topic" },
                       ].map((s, i) => (
                         <button
                           key={i}
                           className="chat-suggestion-chip"
                           onClick={() => { setInput(s.text); }}
                         >
-                          <span style={{ fontSize: "1rem", flexShrink: 0 }}>{s.icon}</span>
+                          <s.icon size={16} aria-hidden="true" style={{ flexShrink: 0 }} />
                           <span>{s.text}</span>
                         </button>
                       ))}
@@ -1170,7 +1170,7 @@ function TextChat({
                           {message.generationStats.status === "starting" ? (
                             <><LoaderCircle size={11} className="progress-spinner" /> {message.generationStats.web ? "Searching web..." : message.generationStats.vision ? "Processing image..." : "Waiting for first token..."}</>
                           ) : message.generationStats.status === "streaming" ? (
-                            <><span style={{ opacity: 0.7 }}>⚡</span> {message.generationStats.tokensPerSecond.toFixed(1)} tok/s</>
+                            <><Zap size={11} aria-hidden="true" /> {message.generationStats.tokensPerSecond.toFixed(1)} tok/s</>
                           ) : (
                             <>{message.generationStats.tokens} tokens <span style={{ opacity: 0.5 }}>•</span> {formatGenerationTime(message.generationStats.seconds)}</>
                           )}
@@ -1202,7 +1202,7 @@ function TextChat({
                   {att.type === "image" ? (
                     <img src={att.dataUrl} alt={att.name} style={{ width: "24px", height: "24px", objectFit: "cover", borderRadius: "3px" }} />
                   ) : (
-                    <span style={{ fontWeight: 600 }}>📄</span>
+                    <FileText size={16} aria-hidden="true" style={{ flexShrink: 0 }} />
                   )}
                   <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--md-sys-color-on-surface-variant)" }} title={att.name}>
                     {att.name}
@@ -1405,7 +1405,7 @@ export function MarkdownRenderer({ content }) {
               whiteSpace: "pre-wrap",
               wordBreak: "break-all"
             }}>
-              {lang && <div style={{ fontSize: "0.72rem", color: "var(--md-sys-color-outline)", marginBottom: "4px", textTransform: "uppercase", fontWeight: 600 }}>{lang}</div>}
+              {lang && <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginBottom: "4px", textTransform: "uppercase", fontWeight: 600 }}>{lang}</div>}
               <code>{code.trim()}</code>
             </pre>
           );

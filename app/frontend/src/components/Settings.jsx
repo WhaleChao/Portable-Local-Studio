@@ -4,7 +4,7 @@ import {
   ChevronDown, Image, Type, Settings2, Gauge, Brain, Sparkles,
   Monitor, HardDrive, MemoryStick, Thermometer, Hash, Layers,
   ChevronRight, Box, Wand2, Lightbulb, RotateCcw, Check, Palette, Volume2,
-  DownloadCloud, RefreshCw
+  DownloadCloud, RefreshCw, Rocket, Scale, Turtle
 } from "lucide-react";
 import {
   stopServer,
@@ -101,9 +101,9 @@ function HardwareTierBadge({ specs }) {
   if (!specs?.tier) return null;
 
   const tierConfig = {
-    high: { icon: "🚀", label: "High-End PC", color: "tier-high", accent: "#22c55e" },
-    mid: { icon: "⚖️", label: "Balanced PC", color: "tier-mid", accent: "#3b82f6" },
-    low: { icon: "🥔", label: "Potato PC", color: "tier-low", accent: "#f59e0b" },
+    high: { icon: Rocket, label: "High-End PC", color: "tier-high", accent: "#22c55e" },
+    mid: { icon: Scale, label: "Balanced PC", color: "tier-mid", accent: "#3b82f6" },
+    low: { icon: Turtle, label: "Potato PC", color: "tier-low", accent: "#f59e0b" },
   };
 
   const tier = tierConfig[specs.tier] || tierConfig.low;
@@ -112,7 +112,7 @@ function HardwareTierBadge({ specs }) {
   return (
     <div className={`hardware-tier-badge ${tier.color}`}>
       <div className="hardware-tier-header">
-        <div className="hardware-tier-icon">{tier.icon}</div>
+        <div className="hardware-tier-icon"><tier.icon size={22} aria-hidden="true" /></div>
         <div className="hardware-tier-info">
           <div className="hardware-tier-name">{tier.label}</div>
           <div className="hardware-tier-specs">
@@ -159,12 +159,11 @@ function PremiumToggle({ checked, onChange, label, description }) {
 }
 
 // ─── Section Header Component ───
-function SectionHeader({ icon: Icon, title, count, color, isExpanded, onToggle }) {
+function SectionHeader({ icon: Icon, title, count, isExpanded, onToggle }) {
   return (
     <div
       className="settings-section-header"
       style={{
-        borderLeftColor: color,
         cursor: "pointer",
         userSelect: "none",
         display: "flex",
@@ -183,7 +182,7 @@ function SectionHeader({ icon: Icon, title, count, color, isExpanded, onToggle }
       aria-expanded={isExpanded}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1 }}>
-        <div className="settings-section-icon" style={{ background: color + "15", color }}>
+        <div className="settings-section-icon">
           <Icon size={22} />
         </div>
         <div className="settings-section-title">{title}</div>
@@ -677,7 +676,6 @@ function Settings({
         icon={Image} 
         title="Image Generation" 
         count={4}
-        color="#3b82f6"
         isExpanded={expandedSections.image}
         onToggle={() => toggleSection("image")}
       />
@@ -741,7 +739,7 @@ function Settings({
                         style={{ fontSize: "0.8rem", padding: "10px 4px", height: "auto" }}
                       >
                         <div style={{ fontWeight: 700 }}>{ratio.id}</div>
-                        <div style={{ fontSize: "0.7rem", opacity: 0.8, marginTop: "2px" }}>
+                        <div style={{ fontSize: "0.75rem", opacity: 0.8, marginTop: "2px" }}>
                           {rw}×{rh}
                         </div>
                       </button>
@@ -962,7 +960,6 @@ function Settings({
         icon={Type} 
         title="Text Generation" 
         count={5}
-        color="#8b5cf6"
         isExpanded={expandedSections.text}
         onToggle={() => toggleSection("text")}
       />
@@ -1306,7 +1303,6 @@ function Settings({
           icon={Volume2} 
           title="Speech Transcription" 
           count={4}
-          color="#10b981"
           isExpanded={expandedSections.speech}
           onToggle={() => toggleSection("speech")}
         />
@@ -1424,7 +1420,6 @@ function Settings({
           icon={Volume2}
           title="Text to Speech"
           count={2}
-          color="#8b5cf6"
           isExpanded={expandedSections.tts}
           onToggle={() => toggleSection("tts")}
         />
@@ -1500,7 +1495,6 @@ function Settings({
         icon={Palette} 
         title="Appearance & Themes" 
         count={2}
-        color="var(--md-sys-color-primary)"
         isExpanded={expandedSections.appearance}
         onToggle={() => toggleSection("appearance")}
       />
@@ -1566,7 +1560,7 @@ function Settings({
                       <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.primary, border: "2px solid rgba(255,255,255,0.25)", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }} title="Primary" />
                       <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.secondary, border: "2px solid rgba(255,255,255,0.25)", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }} title="Secondary" />
                       <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.bg, border: "1.5px solid rgba(0,0,0,0.12)", boxShadow: "inset 0 2px 4px rgba(0,0,0,0.06)" }} title="Background" />
-                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", opacity: 0.6, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", opacity: 0.6, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                         {t.type}
                       </span>
                     </div>

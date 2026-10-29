@@ -1353,7 +1353,7 @@ function ModelManager({
       </div>
 
       {/* Tab Selector for Image vs Text */}
-      <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px", marginBottom: "20px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px", marginBottom: "20px" }}>
         <button
           className={`m3-btn ${activeModelType === "image" ? "m3-btn-filled" : "m3-btn-outlined"}`}
           onClick={() => setActiveModelType("image")}
@@ -1512,8 +1512,8 @@ function ModelManager({
                   {modelLoadProgress.device ? ` • ${modelLoadProgress.device}` : ""}
                 </div>
                 {(modelLoadProgress.backendMode === "Apple NPU" || modelLoadProgress.backendMode === "Apple Neural Engine (NPU)") && (
-                  <div style={{ color: "var(--md-sys-color-primary)", marginTop: "4px", fontWeight: "500" }}>
-                    ⚠️ Note: The first time loading this model, compilation on the Apple Neural Engine (NPU) can take 3–4 minutes. Subsequent loads will be almost instant.
+                  <div style={{ color: "var(--md-sys-color-primary)", marginTop: "4px", fontWeight: "500", display: "flex", gap: "6px", alignItems: "flex-start" }}>
+                    <AlertTriangle size={14} aria-hidden="true" style={{ flexShrink: 0, marginTop: "2px" }} /> Note: The first time loading this model, compilation on the Apple Neural Engine (NPU) can take 3–4 minutes. Subsequent loads will be almost instant.
                   </div>
                 )}
               </div>
@@ -1573,11 +1573,12 @@ function ModelManager({
                     background: isActive ? "var(--md-sys-color-primary-container)" : "var(--md-sys-color-surface-variant)",
                     color: isActive ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)",
                     borderRadius: "var(--md-shape-corner-medium)",
-                    border: "1px solid var(--md-sys-color-outline-variant)"
+                    border: "1px solid var(--border-color)",
+                    gap: "12px"
                   }}
                 >
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{filename}</span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, fontSize: "0.95rem", overflowWrap: "anywhere" }}>{filename}</span>
                     <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>
                       {activeModelType === "image"
                         ? (model.backendType === "openvino-npu" ? "OpenVINO NPU Model" : model.format || "Local Weights File")
@@ -1590,7 +1591,7 @@ function ModelManager({
                     </span>
                   </div>
                   
-                  <div style={{ display: "flex", gap: "8px" }}>
+                  <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
                     {isActive ? (
                       <button className="m3-btn m3-btn-error" style={{ height: "36px", padding: "0 16px" }} onClick={() => handleUnloadModel()} disabled={isUnloading}>
                         {isUnloading ? <RefreshCw className="progress-spinner" size={14} /> : <Trash2 size={14} />}
@@ -1718,7 +1719,7 @@ function ModelManager({
                         {model.name}
                         {isRecommended && (
                           <span title={model.fitReason || `Recommended for ${systemTier} tier hardware`} style={{
-                            fontSize: "0.68rem", 
+                            fontSize: "0.75rem", 
                             color: "#2e7d32", 
                             background: "#e8f5e9", 
                             padding: "2px 6px", 
@@ -1759,7 +1760,7 @@ function ModelManager({
                           <div className="model-progress-fill" style={{ width: `${Math.min(100, Math.max(0, downloadProgress))}%`, transition: "width 0.2s ease" }}></div>
                         </div>
                         {downloadSpeed && (
-                          <div style={{ fontSize: "0.7rem", color: "var(--md-sys-color-outline)", marginTop: "4px" }}>
+                          <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "4px" }}>
                             {downloadSpeed}
                           </div>
                         )}
@@ -1785,6 +1786,10 @@ function ModelManager({
                         fontWeight: 600,
                         lineHeight: 1.2,
                         textDecoration: "none",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        minHeight: "28px",
+                        padding: "0 8px",
                       }}
                     >
                       {model.pageUrl ? "View on Hugging Face" : "Save to Downloads folder"}
@@ -1872,7 +1877,7 @@ function ModelManager({
               <div className="model-progress-bar" style={{ margin: "4px 0" }}>
                 <div className="model-progress-fill" style={{ width: `${downloadProgress}%`, transition: "width 0.15s ease" }}></div>
               </div>
-              <div style={{ fontSize: "0.7rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
                 {downloadSpeed}
               </div>
               <button className="m3-btn m3-btn-error" style={{ height: "34px", padding: "0 14px", marginTop: "10px" }} onClick={handleCancelDownload}>

@@ -1,5 +1,5 @@
 import React, { memo, useState, useRef, useCallback } from "react";
-import { Sparkles, Download, Copy, RefreshCw, Check, Sliders, Trash2, ImagePlus } from "lucide-react";
+import { Sparkles, Download, Copy, RefreshCw, Check, Sliders, Trash2, ImagePlus, AlertTriangle } from "lucide-react";
 import { 
   generateImage, 
   startServer, 
@@ -766,7 +766,7 @@ function Generator({
                         disabled={isGenerating}
                         style={{ width: "100%" }}
                       />
-                      <div style={{ fontSize: "0.72rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
                         Lower = closer to your image; higher = more creative freedom. 0.7 is a good start.
                       </div>
                     </div>
@@ -870,8 +870,8 @@ function Generator({
                     </div>
                     
                     {isCpuFallback && (
-                      <div style={{ fontSize: "0.8rem", color: "var(--md-sys-color-primary)", fontWeight: 600, background: "var(--md-sys-color-primary-container)", padding: "4px 12px", borderRadius: "12px", margin: "4px 0 8px 0", animation: "pulse 2s infinite" }}>
-                        ⚠️ CPU Fallback Detected (Running Slower)
+                      <div style={{ fontSize: "0.8rem", color: "var(--md-sys-color-primary)", fontWeight: 600, background: "var(--md-sys-color-primary-container)", padding: "4px 12px", borderRadius: "12px", margin: "4px 0 8px 0", animation: "pulse 2s infinite", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        <AlertTriangle size={14} aria-hidden="true" /> CPU Fallback Detected (Running Slower)
                       </div>
                     )}
 
