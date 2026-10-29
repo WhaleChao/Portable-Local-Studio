@@ -3769,7 +3769,9 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
 /* ---- Sidebar (chat-app layout). Sizes are in px on purpose: the sidebar keeps its
    proportions when the user raises the app text size for chats. ---- */
 .sidebar {
-  width: 260px;
+  position: relative;
+  width: var(--sidebar-width, 260px);
+  flex-shrink: 0;
   padding: 8px 10px 10px;
   gap: 0;
   justify-content: flex-start;
@@ -3777,6 +3779,48 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   border-right: 1px solid var(--border-color-muted);
   font-size: 15px;
   letter-spacing: -0.005em;
+}
+
+/* Drag handle on the sidebar's right edge (also keyboard-adjustable) */
+.sidebar.resizing {
+  transition: none;
+  user-select: none;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  z-index: 12;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar.resizing .sidebar-resize-handle::after,
+.sidebar-resize-handle:focus-visible::after {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 30%, transparent);
+}
+
+.sidebar-resize-handle:focus-visible {
+  outline: none;
+}
+
+.sidebar.collapsed .sidebar-resize-handle {
+  display: none;
 }
 
 .sidebar-header {

@@ -1,6 +1,22 @@
 import React, { memo, useMemo, useRef, useState, useEffect } from "react";
 import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, Aperture, ChevronRight } from "lucide-react";
 
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 420;
+const SIDEBAR_DEFAULT = 260;
+const SIDEBAR_WIDTH_KEY = "sidebarWidth";
+
+const clampWidth = (value) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(value)));
+
+function readSidebarWidth() {
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return saved ? clampWidth(saved) : SIDEBAR_DEFAULT;
+  } catch {
+    return SIDEBAR_DEFAULT;
+  }
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function formatGb(value) {
@@ -138,6 +154,45 @@ function Sidebar({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef(null);
+  const [width, setWidth] = useState(readSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    } catch {}
+  }, [width]);
+
+  const startResize = (event) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+    setResizing(true);
+    document.body.style.cursor = "col-resize";
+    const onMove = (moveEvent) => setWidth(clampWidth(startWidth + moveEvent.clientX - startX));
+    const onUp = () => {
+      setResizing(false);
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const resizeWithKeys = (event) => {
+    const step = event.shiftKey ? 40 : 16;
+    const nextWidth = {
+      ArrowLeft: (current) => current - step,
+      ArrowRight: (current) => current + step,
+      Home: () => SIDEBAR_MIN,
+      End: () => SIDEBAR_MAX,
+    }[event.key];
+    if (!nextWidth) return;
+    event.preventDefault();
+    setWidth((current) => clampWidth(nextWidth(current)));
+  };
+
   // History sections start collapsed; remember which ones the user opened
   const [openSections, setOpenSections] = useState(readOpenSections);
 
@@ -230,7 +285,25 @@ function Sidebar({
   const hasResults = sections.some((section) => section.items.length > 0);
 
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Sidebar">
+    <aside
+      className={`sidebar ${collapsed ? "collapsed" : ""} ${resizing ? "resizing" : ""}`}
+      style={{ "--sidebar-width": `${width}px` }}
+      aria-label="Sidebar"
+    >
+      <div
+        className="sidebar-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={SIDEBAR_MIN}
+        aria-valuemax={SIDEBAR_MAX}
+        aria-valuenow={width}
+        tabIndex={0}
+        title="Drag to resize, double-click to reset"
+        onPointerDown={startResize}
+        onDoubleClick={() => setWidth(SIDEBAR_DEFAULT)}
+        onKeyDown={resizeWithKeys}
+      />
       <div className="sidebar-header">
         <Aperture className="sidebar-mark" size={24} strokeWidth={1.75} aria-label="Local AI Studio" />
         <div className="sidebar-header-actions">
