@@ -162,7 +162,7 @@ test("CoreML setup installs and validates PyTorch", () => {
 
 test("image generator exposes the wired negative prompt", () => {
   const generator = read("app/frontend/src/components/Generator.jsx");
-  assert.match(generator, /Negative Prompt \(Optional\)/);
+  assert.match(generator, />Negative prompt</);
   assert.match(generator, /value=\{negativePrompt\}/);
   assert.match(generator, /setNegativePrompt\(e\.target\.value\)/);
 });

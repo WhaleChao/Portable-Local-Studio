@@ -1,11 +1,5 @@
-import React, { memo, useEffect, useState, useCallback } from "react";
-import {
-  Crop, Sliders, Cpu, Info, MessageSquare, SlidersHorizontal, Zap,
-  ChevronDown, Image, Type, Settings2, Gauge, Brain, Sparkles,
-  Monitor, HardDrive, MemoryStick, Thermometer, Hash, Layers,
-  ChevronRight, Box, Wand2, Lightbulb, RotateCcw, Check, Palette, Volume2,
-  DownloadCloud, RefreshCw
-} from "lucide-react";
+import React, { memo, useEffect, useState, useCallback, useRef } from "react";
+import { Check, ChevronDown, DownloadCloud, RefreshCw } from "lucide-react";
 import {
   stopServer,
   formatBytes,
@@ -20,6 +14,7 @@ import {
   getBackendOptions,
 } from "../services/api";
 import { THEMES } from "../themes";
+import "../styles/settings.css";
 
 const ASPECT_RATIOS = [
   { id: "1:1", label: "1:1 Square", width: 512, height: 512, sdxl_width: 1024, sdxl_height: 1024, desc: "Social posts & avatars" },
@@ -27,6 +22,24 @@ const ASPECT_RATIOS = [
   { id: "16:9", label: "16:9 Landscape", width: 768, height: 432, sdxl_width: 1216, sdxl_height: 684, desc: "Widescreen landscape" },
   { id: "9:16", label: "9:16 Portrait", width: 432, height: 768, sdxl_width: 684, sdxl_height: 1216, desc: "Tall phone screen" }
 ];
+
+const SECTIONS = [
+  { id: "appearance", label: "Appearance" },
+  { id: "image", label: "Image generation" },
+  { id: "text", label: "Text generation" },
+  { id: "speech", label: "Speech" },
+  { id: "tts", label: "Voice" },
+];
+
+const SECTION_STORAGE_KEY = "settings_active_section";
+
+const readStoredSection = () => {
+  try {
+    const saved = localStorage.getItem(SECTION_STORAGE_KEY);
+    if (SECTIONS.some((s) => s.id === saved)) return saved;
+  } catch (_) {}
+  return "appearance";
+};
 
 const isSD15OrCustomModel = (modelName) => {
   if (!modelName) return true;
@@ -37,182 +50,139 @@ const isSD15OrCustomModel = (modelName) => {
   return true;
 };
 
-// ─── Collapsible Card Component ───
-function CollapsibleCard({ icon: Icon, title, subtitle, children, defaultExpanded = false, id, badge, badgeColor }) {
-  const [isExpanded, setIsExpanded] = useState(() => {
-    const saved = localStorage.getItem(`settings_card_${id}`);
-    return saved !== null ? saved === "true" : defaultExpanded;
-  });
-
-  const toggle = useCallback(() => {
-    const newState = !isExpanded;
-    setIsExpanded(newState);
-    localStorage.setItem(`settings_card_${id}`, String(newState));
-  }, [isExpanded, id]);
-
-  return (
-    <div className="collapsible-card">
-      <button
-        className="collapsible-header"
-        onClick={toggle}
-        aria-expanded={isExpanded}
-        type="button"
-      >
-        <div className="collapsible-header-left">
-          <div className="collapsible-header-icon">
-            <Icon size={18} />
-          </div>
-          <div>
-            <div className="collapsible-header-title">
-              {title}
-              {badge && (
-                <span 
-                  className="collapsible-header-badge" 
-                  style={{ 
-                    background: badgeColor || "var(--md-sys-color-primary-container)",
-                    color: badgeColor ? "#fff" : "var(--md-sys-color-on-primary-container)"
-                  }}
-                >
-                  {badge}
-                </span>
-              )}
-            </div>
-            {subtitle && <div className="collapsible-header-subtitle">{subtitle}</div>}
-          </div>
-        </div>
-        <div className="collapsible-header-right">
-          <ChevronDown
-            size={20}
-            className={`collapsible-chevron ${isExpanded ? "expanded" : ""}`}
-          />
-        </div>
-      </button>
-      {isExpanded && (
-        <div className="collapsible-content">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Hardware Tier Badge Component ───
-function HardwareTierBadge({ specs }) {
-  if (!specs?.tier) return null;
-
-  const tierConfig = {
-    high: { icon: "🚀", label: "High-End PC", color: "tier-high", accent: "#22c55e" },
-    mid: { icon: "⚖️", label: "Balanced PC", color: "tier-mid", accent: "#3b82f6" },
-    low: { icon: "🥔", label: "Potato PC", color: "tier-low", accent: "#f59e0b" },
-  };
-
-  const tier = tierConfig[specs.tier] || tierConfig.low;
-  const rec = specs.recommended_text_settings;
-
-  return (
-    <div className={`hardware-tier-badge ${tier.color}`}>
-      <div className="hardware-tier-header">
-        <div className="hardware-tier-icon">{tier.icon}</div>
-        <div className="hardware-tier-info">
-          <div className="hardware-tier-name">{tier.label}</div>
-          <div className="hardware-tier-specs">
-            {specs.cpu_name} • {specs.cpu_cores_physical} cores • {specs.ram_total_gb}GB RAM
-            {specs.gpu_name && specs.gpu_name !== "Loading..." && ` • ${specs.gpu_name}`}
-            {specs.gpu_vram_gb > 0 && ` • ${specs.gpu_vram_gb}GB VRAM`}
-          </div>
-        </div>
-      </div>
-      {rec && (
-        <>
-          <div className="hardware-tier-divider" />
-          <div className="hardware-tier-chips">
-            <span className="hardware-tier-chip">Ctx: {rec.contextSize}</span>
-            <span className="hardware-tier-chip">Threads: {rec.threads}</span>
-            <span className="hardware-tier-chip">KV: {rec.cacheTypeK}</span>
-            <span className="hardware-tier-chip">Batch: {rec.batchSize}</span>
-            <span className="hardware-tier-chip">Profile: {rec.performanceProfile}</span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Premium Toggle Component ───
-function PremiumToggle({ checked, onChange, label, description }) {
-  return (
-    <label className="premium-toggle" style={{ cursor: "pointer" }}>
-      <div
-        className={`premium-toggle-checkbox ${checked ? "checked" : ""}`}
-        onClick={() => onChange(!checked)}
-        role="checkbox"
-        aria-checked={checked}
-      >
-        {checked && <Check size={14} />}
-      </div>
-      <div style={{ flex: 1 }}>
-        <div className="premium-toggle-label">{label}</div>
-        {description && <div className="premium-toggle-desc">{description}</div>}
-      </div>
-    </label>
-  );
-}
-
-// ─── Section Header Component ───
-function SectionHeader({ icon: Icon, title, count, color, isExpanded, onToggle }) {
-  return (
-    <div
-      className="settings-section-header"
-      style={{
-        borderLeftColor: color,
-        cursor: "pointer",
-        userSelect: "none",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-      }}
-      onClick={onToggle}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      aria-expanded={isExpanded}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1 }}>
-        <div className="settings-section-icon" style={{ background: color + "15", color }}>
-          <Icon size={22} />
-        </div>
-        <div className="settings-section-title">{title}</div>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-        {count && (
-          <span className="settings-section-count">{count} settings</span>
-        )}
-        <ChevronDown
-          size={20}
-          style={{
-            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-            transition: "transform 0.3s var(--md-transition-easing)",
-            color: isExpanded ? "var(--md-sys-color-primary)" : "var(--md-sys-color-outline)",
-            flexShrink: 0
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
 const getSliderStyle = (value, min, max) => {
   const v = Number(value);
   const mn = Number(min);
   const mx = Number(max);
   const pct = mx === mn ? 0 : ((v - mn) / (mx - mn)) * 100;
-  return { "--value": `${pct}%` };
+  return { "--value": `${Math.max(0, Math.min(100, pct))}%` };
 };
+
+// ─── Building blocks ───
+
+// One setting: label + optional description on the left, control on the right.
+// `wide` puts the control full width under the label (long text, tile grids).
+function SettingRow({ title, description, htmlFor, wide = false, children }) {
+  const Title = htmlFor ? "label" : "div";
+  return (
+    <li className={`row-item settings-row ${wide ? "settings-row-wide" : ""}`}>
+      <div className="row-item-main">
+        <Title className="row-item-title" {...(htmlFor ? { htmlFor } : {})}>{title}</Title>
+        {description && <div className="row-item-meta">{description}</div>}
+      </div>
+      {children && <div className="settings-control">{children}</div>}
+    </li>
+  );
+}
+
+function Switch({ checked, onChange, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={Boolean(checked)}
+      aria-label={label}
+      className="settings-switch"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="settings-switch-knob" aria-hidden="true" />
+    </button>
+  );
+}
+
+function Slider({ label, value, min, max, step = 1, onChange, display }) {
+  return (
+    <div className="settings-slider-wrap">
+      <input
+        type="range"
+        className="settings-slider"
+        aria-label={label}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={onChange}
+        style={getSliderStyle(value, min, max)}
+      />
+      <span className="settings-slider-value" aria-hidden="true">{display ?? value}</span>
+    </div>
+  );
+}
+
+function Choice({ label, options, value, onSelect }) {
+  return (
+    <div className="segmented settings-choice" role="group" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          className="segmented-item"
+          aria-pressed={value === opt.id}
+          onClick={() => onSelect(opt.id)}
+          disabled={opt.disabled}
+          title={opt.title}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Select({ id, value, onChange, children }) {
+  return (
+    <span className="settings-select-wrap">
+      <select id={id} className="settings-select" value={value} onChange={onChange}>
+        {children}
+      </select>
+      <ChevronDown size={14} className="settings-select-chevron" aria-hidden="true" />
+    </span>
+  );
+}
+
+// ─── Hardware summary (top of Text generation) ───
+const TIER_CONFIG = {
+  high: { label: "High-end PC", profile: "high" },
+  mid: { label: "Balanced PC", profile: "balanced" },
+  low: { label: "Potato PC", profile: "potato" },
+};
+
+function HardwareSummary({ specs }) {
+  if (!specs?.tier) return null;
+  const tierKey = TIER_CONFIG[specs.tier] ? specs.tier : "low";
+  const tier = TIER_CONFIG[tierKey];
+  const recRaw = specs.recommended_text_settings;
+  // Accept either a flat recommendation or one keyed by tier (low/mid/high).
+  const rec = recRaw && recRaw.contextSize === undefined ? recRaw[tierKey] : recRaw;
+
+  const parts = [
+    specs.cpu_name,
+    specs.cpu_cores_physical ? `${specs.cpu_cores_physical} cores` : null,
+    specs.ram_total_gb ? `${specs.ram_total_gb} GB RAM` : null,
+    specs.gpu_name && specs.gpu_name !== "Loading..." ? specs.gpu_name : null,
+    specs.gpu_vram_gb > 0 ? `${specs.gpu_vram_gb} GB VRAM` : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="settings-summary">
+      <div className="settings-summary-head">
+        <span className={`settings-tier-dot tier-${tierKey}`} aria-hidden="true" />
+        <span className="settings-summary-title">{tier.label}</span>
+      </div>
+      {parts.length > 0 && <div className="settings-summary-meta">{parts.join(" · ")}</div>}
+      {rec && (
+        <div className="settings-summary-tags" aria-label="Recommended settings">
+          <span className="settings-summary-tags-label">Recommended</span>
+          {rec.contextSize !== undefined && <span className="tag">Context {rec.contextSize}</span>}
+          {rec.threads !== undefined && <span className="tag">Threads {rec.threads}</span>}
+          {rec.cacheTypeK && <span className="tag">KV {rec.cacheTypeK}</span>}
+          {rec.batchSize !== undefined && <span className="tag">Batch {rec.batchSize}</span>}
+          <span className="tag">Profile {rec.performanceProfile || tier.profile}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Main Settings Component ───
 function Settings({
@@ -282,13 +252,13 @@ function Settings({
         await stopLlm();
         setLlmStatus((prev) => ({ ...prev, ready: false, running: false }));
         showAlert({
-          title: "Settings Saved & Applied",
-          message: "Text settings saved successfully. The running text model has been unloaded to apply these changes."
+          title: "Text settings saved",
+          message: "The running text model was unloaded so the new settings apply on the next load."
         });
       } else {
         showAlert({
-          title: "Settings Saved",
-          message: "Text settings saved successfully."
+          title: "Text settings saved",
+          message: "The new settings apply the next time a text model loads."
         });
       }
     } catch (err) {
@@ -300,22 +270,28 @@ function Settings({
     }
   };
 
-  const [expandedSections, setExpandedSections] = useState(() => {
-    return {
-      appearance: localStorage.getItem("settings_section_appearance") === "true",
-      image: localStorage.getItem("settings_section_image") === "true",
-      text: localStorage.getItem("settings_section_text") === "true",
-      speech: localStorage.getItem("settings_section_speech") === "true",
-      tts: localStorage.getItem("settings_section_tts") === "true",
-    };
-  });
 
-  const toggleSection = (section) => {
-    setExpandedSections((prev) => {
-      const nextState = !prev[section];
-      localStorage.setItem(`settings_section_${section}`, String(nextState));
-      return { ...prev, [section]: nextState };
-    });
+  const [activeSection, setActiveSection] = useState(readStoredSection);
+  const tabRefs = useRef({});
+
+  const selectSection = useCallback((section) => {
+    setActiveSection(section);
+    try {
+      localStorage.setItem(SECTION_STORAGE_KEY, section);
+    } catch (_) {}
+  }, []);
+
+  const handleTabKeyDown = (e) => {
+    const index = SECTIONS.findIndex((s) => s.id === activeSection);
+    let next = null;
+    if (e.key === "ArrowRight") next = SECTIONS[(index + 1) % SECTIONS.length];
+    else if (e.key === "ArrowLeft") next = SECTIONS[(index - 1 + SECTIONS.length) % SECTIONS.length];
+    else if (e.key === "Home") next = SECTIONS[0];
+    else if (e.key === "End") next = SECTIONS[SECTIONS.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    selectSection(next.id);
+    tabRefs.current[next.id]?.focus();
   };
 
   useEffect(() => {
@@ -671,618 +647,405 @@ function Settings({
   };
 
   // ─── Image Settings ───
-  const renderImageSettings = () => (
-    <>
-      <SectionHeader 
-        icon={Image} 
-        title="Image Generation" 
-        count={4}
-        color="#3b82f6"
-        isExpanded={expandedSections.image}
-        onToggle={() => toggleSection("image")}
-      />
-      
-      {expandedSections.image && (
-        <div className="settings-expanded-content">
-          <div className="settings-two-column">
-        {/* Left Column */}
-        <div className="settings-column">
-          {/* Size & Shape */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <Crop size={16} />
-              Size & Shape
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Resolution</span>
-                  <span className="settings-value-badge">
-                    {constraints.width >= 1024 ? "SDXL" : "SD 1.5"}
-                  </span>
-                </div>
-                <div className="m3-segmented-button">
-                  {["sd15", "sdxl"].map((mode) => (
-                    <button
-                      key={mode}
-                      className={`m3-segment-item ${(constraints.width >= 1024 ? "sdxl" : "sd15") === mode ? "active" : ""}`}
-                      onClick={() => {
-                        const ratio = ASPECT_RATIOS.find(r => {
-                          const rw = constraints.width >= 1024 ? r.sdxl_width : r.width;
-                          const rh = constraints.height >= 1024 ? r.sdxl_height : r.height;
-                          return Math.abs(rw - constraints.width) < 10 && Math.abs(rh - constraints.height) < 10;
-                        })?.id || "1:1";
-                        handleAspectRatioChange(ratio, mode);
-                      }}
-                      disabled={isSD15OrCustom && mode === "sdxl"}
-                    >
-                      {mode === "sd15" ? "512px" : "1024px"}
-                    </button>
-                  ))}
-                </div>
-              </div>
+  const renderImageSettings = () => {
+    const resolutionMode = constraints.width >= 1024 ? "sdxl" : "sd15";
+    const isSDXLSize = constraints.width >= 1024 && !isSD15OrCustom;
+    const stepsMax = isOpenVinoNpu ? 8 : 60;
 
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Aspect Ratio</span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
-                  {ASPECT_RATIOS.map((ratio) => {
-                    const isSDXL = constraints.width >= 1024 && !isSD15OrCustom;
-                    const rw = isSDXL ? ratio.sdxl_width : ratio.width;
-                    const rh = isSDXL ? ratio.sdxl_height : ratio.height;
-                    const isActive = Math.abs(constraints.width - rw) < 10 && Math.abs(constraints.height - rh) < 10;
-                    return (
-                      <button
-                        key={ratio.id}
-                        className={`m3-btn ${isActive ? "m3-btn-filled" : "m3-btn-outlined"}`}
-                        onClick={() => handleAspectRatioChange(ratio.id, isSDXL ? "sdxl" : "sd15")}
-                        disabled={isOpenVinoNpu && ratio.id !== "1:1"}
-                        style={{ fontSize: "0.8rem", padding: "10px 4px", height: "auto" }}
-                      >
-                        <div style={{ fontWeight: 700 }}>{ratio.id}</div>
-                        <div style={{ fontSize: "0.7rem", opacity: 0.8, marginTop: "2px" }}>
-                          {rw}×{rh}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div className="m3-text-field">
-                  <label className="m3-text-field-label">Width</label>
-                  <input
-                    type="number"
-                    className="m3-input"
-                    value={constraints.width}
-                    onChange={(e) => updateConstraint("width", Math.round(parseInt(e.target.value) / 64) * 64)}
-                    min="64"
-                    max="2048"
-                    step="64"
-                  />
-                </div>
-                <div className="m3-text-field">
-                  <label className="m3-text-field-label">Height</label>
-                  <input
-                    type="number"
-                    className="m3-input"
-                    value={constraints.height}
-                    onChange={(e) => updateConstraint("height", Math.round(parseInt(e.target.value) / 64) * 64)}
-                    min="64"
-                    max="2048"
-                    step="64"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Quality & Speed */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <Sliders size={16} />
-              Quality & Speed
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Detail Steps</span>
-                  <span className="settings-value-badge">{constraints.steps}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={constraints.steps}
-                  onChange={(e) => updateConstraint("steps", parseInt(e.target.value))}
-                  min="1"
-                  max={isOpenVinoNpu ? "8" : "60"}
-                  style={getSliderStyle(constraints.steps, 1, isOpenVinoNpu ? 8 : 60)}
-                />
-                <span className="settings-option-desc">
-                  {isOpenVinoNpu
-                    ? "LCM OpenVINO: 1-8 fast steps"
-                    : "More steps = sharper details, longer time"}
-                </span>
-              </div>
-
-              <div className="m3-text-field">
-                <label className="m3-text-field-label">Random Seed</label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <input
-                    type="number"
-                    className="m3-input"
-                    value={constraints.seed}
-                    onChange={(e) => updateConstraint("seed", parseInt(e.target.value) || -1)}
-                    placeholder="-1 for random"
-                    style={{ flex: 1 }}
-                  />
+    return (
+      <>
+        <div className="page-section-label settings-group-label">Size</div>
+        <ul className="row-list">
+          <SettingRow
+            title="Resolution"
+            description={resolutionMode === "sdxl" ? "SDXL base size" : "SD 1.5 base size"}
+          >
+            <Choice
+              label="Resolution"
+              value={resolutionMode}
+              options={[
+                { id: "sd15", label: "512px" },
+                {
+                  id: "sdxl",
+                  label: "1024px",
+                  disabled: isSD15OrCustom,
+                  title: isSD15OrCustom ? "The loaded model works at 512px" : undefined,
+                },
+              ]}
+              onSelect={(mode) => {
+                const ratio = ASPECT_RATIOS.find(r => {
+                  const rw = constraints.width >= 1024 ? r.sdxl_width : r.width;
+                  const rh = constraints.height >= 1024 ? r.sdxl_height : r.height;
+                  return Math.abs(rw - constraints.width) < 10 && Math.abs(rh - constraints.height) < 10;
+                })?.id || "1:1";
+                handleAspectRatioChange(ratio, mode);
+              }}
+            />
+          </SettingRow>
+          <SettingRow
+            title="Aspect ratio"
+            description={isOpenVinoNpu ? "OpenVINO NPU supports square images only" : undefined}
+            wide
+          >
+            <div className="settings-ratio-grid" role="group" aria-label="Aspect ratio">
+              {ASPECT_RATIOS.map((ratio) => {
+                const rw = isSDXLSize ? ratio.sdxl_width : ratio.width;
+                const rh = isSDXLSize ? ratio.sdxl_height : ratio.height;
+                const isActive = Math.abs(constraints.width - rw) < 10 && Math.abs(constraints.height - rh) < 10;
+                const scale = 28 / Math.max(ratio.width, ratio.height);
+                return (
                   <button
-                    className="m3-btn m3-btn-tonal"
-                    onClick={() => updateConstraint("seed", -1)}
+                    key={ratio.id}
+                    type="button"
+                    className="settings-ratio-tile"
+                    aria-pressed={isActive}
+                    aria-label={`${ratio.label}, ${rw} by ${rh}`}
+                    onClick={() => handleAspectRatioChange(ratio.id, isSDXLSize ? "sdxl" : "sd15")}
+                    disabled={isOpenVinoNpu && ratio.id !== "1:1"}
                   >
-                    Random
+                    <span className="settings-ratio-shape-box" aria-hidden="true">
+                      <span
+                        className="settings-ratio-shape"
+                        style={{ width: `${Math.round(ratio.width * scale)}px`, height: `${Math.round(ratio.height * scale)}px` }}
+                      />
+                    </span>
+                    <span className="settings-ratio-id">{ratio.id}</span>
+                    <span className="settings-ratio-size">{rw}×{rh}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </SettingRow>
+          <SettingRow title="Width" description="Pixels, rounded to multiples of 64" htmlFor="settings-image-width">
+            <input
+              id="settings-image-width"
+              type="number"
+              className="settings-input"
+              value={constraints.width}
+              onChange={(e) => updateConstraint("width", Math.round(parseInt(e.target.value) / 64) * 64)}
+              min="64"
+              max="2048"
+              step="64"
+            />
+          </SettingRow>
+          <SettingRow title="Height" description="Pixels, rounded to multiples of 64" htmlFor="settings-image-height">
+            <input
+              id="settings-image-height"
+              type="number"
+              className="settings-input"
+              value={constraints.height}
+              onChange={(e) => updateConstraint("height", Math.round(parseInt(e.target.value) / 64) * 64)}
+              min="64"
+              max="2048"
+              step="64"
+            />
+          </SettingRow>
+        </ul>
+
+        <div className="page-section-label settings-group-label">Quality</div>
+        <ul className="row-list">
+          <SettingRow
+            title="Detail steps"
+            description={isOpenVinoNpu ? "LCM OpenVINO: 1–8 fast steps" : "More steps give sharper detail but take longer"}
+          >
+            <Slider
+              label="Detail steps"
+              value={constraints.steps}
+              min={1}
+              max={stepsMax}
+              onChange={(e) => updateConstraint("steps", parseInt(e.target.value))}
+            />
+          </SettingRow>
+          <SettingRow title="Seed" description="-1 picks a random seed each time" htmlFor="settings-image-seed">
+            <div className="settings-inline">
+              <input
+                id="settings-image-seed"
+                type="number"
+                className="settings-input"
+                value={constraints.seed}
+                onChange={(e) => updateConstraint("seed", parseInt(e.target.value) || -1)}
+                placeholder="-1"
+              />
+              <button type="button" className="btn" onClick={() => updateConstraint("seed", -1)}>
+                Random
+              </button>
+            </div>
+          </SettingRow>
+        </ul>
+
+        <div className="page-section-label settings-group-label">Memory</div>
+        <ul className="row-list">
+          <SettingRow title="VAE tiling" description="Process the image in tiles to save VRAM">
+            <Switch label="VAE tiling" checked={constraints.vaeTiling} onChange={(v) => updateConstraint("vaeTiling", v)} />
+          </SettingRow>
+          <SettingRow title="VAE on CPU" description="Run the decoder on the CPU if the GPU runs out of memory">
+            <Switch label="VAE on CPU" checked={constraints.vaeOnCpu} onChange={(v) => updateConstraint("vaeOnCpu", v)} />
+          </SettingRow>
+          <SettingRow title="Flash attention" description="Faster attention with less memory">
+            <Switch label="Flash attention" checked={constraints.useFlashAttn} onChange={(v) => updateConstraint("useFlashAttn", v)} />
+          </SettingRow>
+        </ul>
+
+        <div className="page-section-label settings-group-label">Acceleration</div>
+        <ul className="row-list">
+          <SettingRow title="Accelerator" description="Hardware used to generate images" wide>
+            <Choice
+              label="Accelerator"
+              value={constraints.backendType}
+              options={visibleBackends.map((b) => {
+                const isAvailable = b.available !== false;
+                const isDownloading = backendDownload.active && backendDownload.backendId === b.id;
+                return {
+                  id: b.id,
+                  label: isDownloading
+                    ? `${Math.max(0, Math.min(100, Math.round(backendDownload.progress)))}%`
+                    : b.label,
+                  disabled: !isAvailable,
+                  title: !isAvailable ? b.reason : undefined,
+                };
+              })}
+              onSelect={(id) => {
+                const b = visibleBackends.find((item) => item.id === id);
+                if (b && b.available !== false) handleBackendChange(id);
+              }}
+            />
+          </SettingRow>
+          {unavailableBackends.map((backend) => {
+            const isDownloading = backendDownload.active && backendDownload.backendId === backend.id;
+            const progress = Math.max(0, Math.min(100, Math.round(backendDownload.progress || 0)));
+            const hasError = backendDownload.error && backendDownload.backendId === backend.id;
+            return (
+              <li key={`download-${backend.id}`} className="row-item settings-row">
+                <div className="row-item-main">
+                  <div className="row-item-title">{backend.label}</div>
+                  <div
+                    className={`row-item-meta ${hasError && !isDownloading ? "settings-error-text" : ""}`}
+                    title={backendDownload.error || backend.reason}
+                  >
+                    {isDownloading
+                      ? `${progress}%${backendDownload.speed ? ` · ${backendDownload.speed}` : ""}`
+                      : hasError
+                        ? backendDownload.error
+                        : backend.reason}
+                  </div>
+                  {isDownloading && (
+                    <div
+                      className="settings-progress"
+                      role="progressbar"
+                      aria-label={`Downloading ${backend.label}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progress}
+                    >
+                      <div className="settings-progress-fill" style={{ width: `${progress}%` }} />
+                    </div>
+                  )}
+                </div>
+                <div className="row-item-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => handleBackendDownload(backend)}
+                    disabled={backendDownload.active}
+                  >
+                    {isDownloading
+                      ? <RefreshCw className="progress-spinner" size={14} aria-hidden="true" />
+                      : <DownloadCloud size={14} aria-hidden="true" />}
+                    <span>{isDownloading ? "Downloading" : "Download"}</span>
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="settings-column">
-          {/* Memory Optimizations */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <SlidersHorizontal size={16} />
-              Memory Optimizations
-            </div>
-            <div className="m3-field-group">
-              <PremiumToggle
-                checked={constraints.vaeTiling}
-                onChange={(v) => updateConstraint("vaeTiling", v)}
-                label="VAE Tiling"
-                description="Process image in tiles to save VRAM"
-              />
-              <PremiumToggle
-                checked={constraints.vaeOnCpu}
-                onChange={(v) => updateConstraint("vaeOnCpu", v)}
-                label="VAE on CPU"
-                description="Run decoder on CPU if GPU OOM"
-              />
-              <PremiumToggle
-                checked={constraints.useFlashAttn}
-                onChange={(v) => updateConstraint("useFlashAttn", v)}
-                label="Flash Attention"
-                description="Faster attention with less memory"
-              />
-            </div>
-          </div>
-
-          {/* Backend & Acceleration */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <Monitor size={16} />
-              Backend & Acceleration
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Accelerator</span>
-                </div>
-                <div className="m3-segmented-button" style={{ flexWrap: "wrap" }}>
-                  {visibleBackends.map((b) => {
-                    const isAvailable = b.available !== false;
-                    const isDownloading = backendDownload.active && backendDownload.backendId === b.id;
-                    return (
-                    <button
-                      key={b.id}
-                      className={`m3-segment-item ${constraints.backendType === b.id ? "active" : ""} ${!isAvailable ? "disabled" : ""}`}
-                      onClick={() => isAvailable && handleBackendChange(b.id)}
-                      disabled={!isAvailable}
-                      title={!isAvailable ? b.reason : undefined}
-                      style={{ flex: "1 1 auto", minWidth: "80px" }}
-                    >
-                      {isDownloading ? `${Math.max(0, Math.min(100, Math.round(backendDownload.progress)))}%` : b.label}
-                    </button>
-                    );
-                  })}
-                </div>
-                {unavailableBackends.length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
-                    {unavailableBackends.map((backend) => {
-                      const isDownloading = backendDownload.active && backendDownload.backendId === backend.id;
-                      const progress = Math.max(0, Math.min(100, Math.round(backendDownload.progress || 0)));
-                      return (
-                        <div
-                          key={`download-${backend.id}`}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: "10px",
-                            padding: "10px",
-                            border: "1px solid var(--md-sys-color-outline-variant)",
-                            borderRadius: "8px",
-                            background: "var(--md-sys-color-surface-container-low)",
-                          }}
-                        >
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontWeight: 700, color: "var(--md-sys-color-on-surface)" }}>
-                              {backend.label}
-                            </div>
-                            <div className="settings-option-desc" title={backendDownload.error || backend.reason}>
-                              {isDownloading
-                                ? `${progress}% ${backendDownload.speed ? `- ${backendDownload.speed}` : ""}`
-                                : backendDownload.error && backendDownload.backendId === backend.id
-                                  ? backendDownload.error
-                                  : backend.reason}
-                            </div>
-                            {isDownloading && (
-                              <div className="model-progress-bar" style={{ marginTop: "6px" }}>
-                                <div
-                                  className="model-progress-fill"
-                                  style={{
-                                    width: `${progress}%`,
-                                    transition: "width 0.2s ease",
-                                  }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                          <button
-                            className="m3-btn m3-btn-tonal"
-                            onClick={() => handleBackendDownload(backend)}
-                            disabled={backendDownload.active}
-                            style={{ flexShrink: 0 }}
-                          >
-                            {isDownloading ? <RefreshCw className="progress-spinner" size={14} /> : <DownloadCloud size={14} />}
-                            <span>{isDownloading ? "Downloading" : "Download"}</span>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  };
 
   // ─── Text Settings ───
-  const renderTextSettings = () => (
-    <>
-      <SectionHeader 
-        icon={Type} 
-        title="Text Generation" 
-        count={5}
-        color="#8b5cf6"
-        isExpanded={expandedSections.text}
-        onToggle={() => toggleSection("text")}
-      />
-      
-      {expandedSections.text && (
-        <div className="settings-expanded-content">
-          <div className="settings-two-column">
-        {/* Left Column */}
-        <div className="settings-column">
-          {/* Model & Context */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <MessageSquare size={16} />
-              Model & Context
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-text-field">
-                <label className="m3-text-field-label">System Prompt</label>
-                <textarea
-                   className="m3-input"
-                   value={pendingTextSettings.systemPrompt || ""}
-                   onChange={(e) => updateTextSetting("systemPrompt", e.target.value)}
-                   placeholder="Enter system prompt..."
-                   rows={3}
-                   style={{ resize: "vertical", minHeight: "60px" }}
-                />
-                <span className="settings-option-desc" style={{ marginTop: "4px", display: "block" }}>
-                  Defines assistant personality/instructions. (Recommended: Default)
-                </span>
-              </div>
+  const renderTextSettings = () => {
+    const tokenMode = pendingTextSettings.responseTokenMode || "auto";
+    const maxThreads = specs?.cpu_cores_logical || 16;
+    const gpuLayersValue = pendingTextSettings.gpuLayers === -1 ? 50 : pendingTextSettings.gpuLayers;
 
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Context Size</span>
-                  <span className="settings-value-badge">{pendingTextSettings.contextSize || 0}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={pendingTextSettings.contextSize || 0}
-                  onChange={(e) => updateTextSetting("contextSize", parseInt(e.target.value))}
-                  min="0"
-                  max="32768"
-                  step="512"
-                  style={getSliderStyle(pendingTextSettings.contextSize || 0, 0, 32768)}
-                />
-                <span className="settings-option-desc">
-                  Model memory limit. 0 uses default limit. (Recommended: 0)
-                </span>
+    return (
+      <>
+        <HardwareSummary specs={specs} />
+
+        <div className="page-section-label settings-group-label">Model and context</div>
+        <ul className="row-list">
+          <SettingRow
+            title="System prompt"
+            description="Sets the assistant's personality and instructions"
+            htmlFor="settings-system-prompt"
+            wide
+          >
+            <textarea
+              id="settings-system-prompt"
+              className="settings-textarea"
+              value={pendingTextSettings.systemPrompt || ""}
+              onChange={(e) => updateTextSetting("systemPrompt", e.target.value)}
+              placeholder="Enter a system prompt"
+              rows={3}
+            />
+          </SettingRow>
+          <SettingRow title="Context size" description="Model memory limit. 0 uses the model default (recommended)">
+            <Slider
+              label="Context size"
+              value={pendingTextSettings.contextSize || 0}
+              min={0}
+              max={32768}
+              step={512}
+              onChange={(e) => updateTextSetting("contextSize", parseInt(e.target.value))}
+            />
+          </SettingRow>
+        </ul>
+
+        <div className="page-section-label settings-group-label">Generation</div>
+        <ul className="row-list">
+          <SettingRow title="Temperature" description="Lower is focused, higher is more creative. Recommended 0.7">
+            <Slider
+              label="Temperature"
+              value={pendingTextSettings.temperature}
+              min={0}
+              max={2}
+              step={0.1}
+              onChange={(e) => updateTextSetting("temperature", parseFloat(e.target.value))}
+            />
+          </SettingRow>
+          <SettingRow
+            title="Max response tokens"
+            description={tokenMode === "auto"
+              ? "Auto adjusts length to the context window (recommended)"
+              : "Manual uses the token limit below"}
+          >
+            <Choice
+              label="Max response tokens"
+              value={tokenMode}
+              options={[
+                { id: "auto", label: "Auto" },
+                { id: "manual", label: "Manual" },
+              ]}
+              onSelect={(mode) => updateTextSetting("responseTokenMode", mode)}
+            />
+          </SettingRow>
+          {tokenMode === "manual" && (
+            <SettingRow title="Token limit" description="Longest reply the model may write">
+              <Slider
+                label="Token limit"
+                value={pendingTextSettings.maxTokens || 1024}
+                min={64}
+                max={4096}
+                step={64}
+                onChange={(e) => updateTextSetting("maxTokens", parseInt(e.target.value))}
+              />
+            </SettingRow>
+          )}
+          <SettingRow
+            title="Seed"
+            description="-1 is random. A fixed number repeats the same reply"
+            htmlFor="settings-text-seed"
+          >
+            <input
+              id="settings-text-seed"
+              type="number"
+              className="settings-input"
+              value={pendingTextSettings.seed}
+              onChange={(e) => updateTextSetting("seed", parseInt(e.target.value) || -1)}
+              placeholder="-1"
+            />
+          </SettingRow>
+        </ul>
+
+        <div className="page-section-label settings-group-label">Performance</div>
+        <ul className="row-list">
+          <SettingRow title="Profile" description="Presets fill in the hardware settings below">
+            <Choice
+              label="Performance profile"
+              value={pendingTextSettings.performanceProfile || "balanced"}
+              options={["potato", "balanced", "high", "custom"].map((profile) => ({
+                id: profile,
+                label: profile.charAt(0).toUpperCase() + profile.slice(1),
+              }))}
+              onSelect={(profile) => updateTextSetting("performanceProfile", profile)}
+            />
+          </SettingRow>
+          {llmBackends.available?.length > 1 && (
+            <SettingRow title="Text backend">
+              <Choice
+                label="Text backend"
+                value={pendingTextSettings.preferredBackend || "auto"}
+                options={llmBackends.available.map((backend) => ({
+                  id: backend.key,
+                  label: backend.key === "cpu" ? "CPU only" : backend.key.toUpperCase(),
+                }))}
+                onSelect={(key) => updateTextSetting("preferredBackend", key)}
+              />
+            </SettingRow>
+          )}
+          <SettingRow title="CPU threads">
+            <Slider
+              label="CPU threads"
+              value={pendingTextSettings.threads || 4}
+              min={1}
+              max={maxThreads}
+              onChange={(e) => updateTextSetting("threads", parseInt(e.target.value))}
+            />
+          </SettingRow>
+          <SettingRow title="GPU layers" description="50 puts all layers on the GPU">
+            <Slider
+              label="GPU layers"
+              value={gpuLayersValue}
+              min={0}
+              max={50}
+              display={pendingTextSettings.gpuLayers === -1 ? "All" : pendingTextSettings.gpuLayers}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                updateTextSetting("gpuLayers", val >= 50 ? -1 : val);
+              }}
+            />
+          </SettingRow>
+          <SettingRow title="Batch size">
+            <Slider
+              label="Batch size"
+              value={pendingTextSettings.batchSize || 512}
+              min={64}
+              max={2048}
+              step={64}
+              onChange={(e) => updateTextSetting("batchSize", parseInt(e.target.value))}
+            />
+          </SettingRow>
+          <SettingRow title="KV cache" description="Lower precision uses less memory">
+            <Choice
+              label="KV cache"
+              value={pendingTextSettings.cacheTypeK || "q8_0"}
+              options={["q4_0", "q8_0", "f16"].map((type) => ({ id: type, label: type.toUpperCase() }))}
+              onSelect={(type) => {
+                updateTextSetting("cacheTypeK", type);
+                updateTextSetting("cacheTypeV", type);
+              }}
+            />
+          </SettingRow>
+        </ul>
+
+        {hasPendingChanges && (
+          <div className="settings-savebar" role="status">
+            <div className="settings-savebar-text">
+              <div className="settings-savebar-title">Unsaved text settings</div>
+              <div className="settings-savebar-meta">
+                {llmStatus.ready
+                  ? "Saving unloads the running text model to apply the changes."
+                  : "Changes apply the next time a model loads."}
               </div>
             </div>
+            <button type="button" className="btn btn-primary" onClick={handleSaveTextSettings}>
+              Save and apply
+            </button>
           </div>
-
-          {/* Generation Parameters */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <Settings2 size={16} />
-              Generation Parameters
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Temperature</span>
-                  <span className="settings-value-badge">{pendingTextSettings.temperature}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={pendingTextSettings.temperature}
-                  onChange={(e) => updateTextSetting("temperature", parseFloat(e.target.value))}
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  style={getSliderStyle(pendingTextSettings.temperature, 0, 2)}
-                />
-                <span className="settings-option-desc">
-                  Controls creativity. Lower = focused & factual, Higher = creative & diverse. (Recommended: 0.7)
-                </span>
-              </div>
-
-
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Max Response Tokens</span>
-                  <span className="settings-value-badge">
-                    {(pendingTextSettings.responseTokenMode || "auto") === "auto" ? "Auto" : (pendingTextSettings.maxTokens || 1024)}
-                  </span>
-                </div>
-                <div className="m3-segmented-button" style={{ marginBottom: "10px" }}>
-                  {[
-                    { id: "auto", label: "Auto" },
-                    { id: "manual", label: "Manual" },
-                  ].map((mode) => (
-                    <button
-                      key={mode.id}
-                      className={`m3-segment-item ${(pendingTextSettings.responseTokenMode || "auto") === mode.id ? "active" : ""}`}
-                      onClick={() => updateTextSetting("responseTokenMode", mode.id)}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-                {(pendingTextSettings.responseTokenMode || "auto") === "manual" ? (
-                  <>
-                    <input
-                      type="range"
-                      className="m3-slider"
-                      value={pendingTextSettings.maxTokens || 1024}
-                      onChange={(e) => updateTextSetting("maxTokens", parseInt(e.target.value))}
-                      min="64"
-                      max="4096"
-                      step="64"
-                      style={getSliderStyle(pendingTextSettings.maxTokens || 1024, 64, 4096)}
-                    />
-                    <span className="settings-option-desc">
-                      Manual uses the slider value.
-                    </span>
-                  </>
-                ) : (
-                  <span className="settings-option-desc">
-                    Auto adjusts length dynamically based on context window. (Recommended)
-                  </span>
-                )}
-              </div>
-
-              <div className="m3-text-field">
-                <label className="m3-text-field-label">Seed</label>
-                <input
-                  type="number"
-                  className="m3-input"
-                  value={pendingTextSettings.seed}
-                  onChange={(e) => updateTextSetting("seed", parseInt(e.target.value) || -1)}
-                  placeholder="-1"
-                />
-                <span className="settings-option-desc" style={{ marginTop: "4px", display: "block" }}>
-                  Controls repeatability. Use -1 for random, positive integer for identical replies. (Recommended: -1)
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="settings-column">
-          {/* Performance Profile */}
-          <div className="settings-subsection">
-            <div className="settings-subsection-title">
-              <Gauge size={16} />
-              Performance Profile
-            </div>
-            <div className="m3-field-group">
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Profile</span>
-                </div>
-                <div className="m3-segmented-button">
-                  {["potato", "balanced", "high", "custom"].map((profile) => (
-                    <button
-                      key={profile}
-                      className={`m3-segment-item ${(pendingTextSettings.performanceProfile || "balanced") === profile ? "active" : ""}`}
-                      onClick={() => updateTextSetting("performanceProfile", profile)}
-                    >
-                      {profile.charAt(0).toUpperCase() + profile.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-
-
-              {llmBackends.available?.length > 1 && (
-                <div className="m3-slider-group">
-                  <div className="m3-slider-header">
-                    <span className="m3-slider-label">Text Backend</span>
-                  </div>
-                  <div className="m3-segmented-button">
-                    {llmBackends.available.map((backend) => (
-                      <button
-                        key={backend.key}
-                        className={`m3-segment-item ${(pendingTextSettings.preferredBackend || "auto") === backend.key ? "active" : ""}`}
-                        onClick={() => updateTextSetting("preferredBackend", backend.key)}
-                      >
-                        {backend.key === "cpu" ? "CPU Only" : backend.key.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">CPU Threads</span>
-                  <span className="settings-value-badge">{pendingTextSettings.threads || 4}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={pendingTextSettings.threads || 4}
-                  onChange={(e) => updateTextSetting("threads", parseInt(e.target.value))}
-                  min="1"
-                  max={specs?.cpu_cores_logical || 16}
-                  style={getSliderStyle(pendingTextSettings.threads || 4, 1, specs?.cpu_cores_logical || 16)}
-                />
-              </div>
-
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">GPU Layers</span>
-                  <span className="settings-value-badge">{pendingTextSettings.gpuLayers === -1 ? "All" : pendingTextSettings.gpuLayers}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={pendingTextSettings.gpuLayers === -1 ? 50 : pendingTextSettings.gpuLayers}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value);
-                    updateTextSetting("gpuLayers", val >= 50 ? -1 : val);
-                  }}
-                  min="0"
-                  max="50"
-                  style={getSliderStyle(pendingTextSettings.gpuLayers === -1 ? 50 : pendingTextSettings.gpuLayers, 0, 50)}
-                />
-                <span className="settings-option-desc">
-                  50 = All layers on GPU
-                </span>
-              </div>
-
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">Batch Size</span>
-                  <span className="settings-value-badge">{pendingTextSettings.batchSize || 512}</span>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  value={pendingTextSettings.batchSize || 512}
-                  onChange={(e) => updateTextSetting("batchSize", parseInt(e.target.value))}
-                  min="64"
-                  max="2048"
-                  step="64"
-                  style={getSliderStyle(pendingTextSettings.batchSize || 512, 64, 2048)}
-                />
-              </div>
-
-              <div className="m3-slider-group">
-                <div className="m3-slider-header">
-                  <span className="m3-slider-label">KV Cache</span>
-                </div>
-                <div className="m3-segmented-button">
-                  {["q4_0", "q8_0", "f16"].map((type) => (
-                    <button
-                      key={type}
-                      className={`m3-segment-item ${(pendingTextSettings.cacheTypeK || "q8_0") === type ? "active" : ""}`}
-                      onClick={() => {
-                        updateTextSetting("cacheTypeK", type);
-                        updateTextSetting("cacheTypeV", type);
-                      }}
-                    >
-                      {type.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {hasPendingChanges && (
-                <div className="settings-save-bar" style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "16px 20px",
-                  background: "color-mix(in srgb, var(--md-sys-color-primary) 10%, var(--bg-card))",
-                  border: "1px solid color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
-                  borderRadius: "14px",
-                  marginTop: "20px",
-                  gap: "16px",
-                  flexWrap: "wrap",
-                  animation: "fadeIn 0.2s ease",
-                  width: "100%",
-                  boxSizing: "border-box"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <Brain size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>Unsaved Text Generation Settings</div>
-                      <div style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "2px" }}>
-                        {llmStatus.ready
-                          ? "Saving will unload the active text model to apply changes."
-                          : "Changes will be applied on the next model load."}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    className="m3-btn m3-btn-filled"
-                    onClick={handleSaveTextSettings}
-                    style={{
-                      background: "var(--md-sys-color-primary)",
-                      color: "var(--md-sys-color-on-primary)",
-                      border: "none",
-                      borderRadius: "10px",
-                      padding: "10px 18px",
-                      fontWeight: 600,
-                      fontSize: "0.85rem",
-                      cursor: "pointer",
-                      boxShadow: "0 2px 8px color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
-                    }}
-                  >
-                    Save & Apply Changes
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-
-        </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
+        )}
+      </>
+    );
+  };
 
   // ─── Speech Settings ───
   const renderSpeechSettings = () => {
@@ -1302,110 +1065,67 @@ function Settings({
 
     return (
       <>
-        <SectionHeader 
-          icon={Volume2} 
-          title="Speech Transcription" 
-          count={4}
-          color="#10b981"
-          isExpanded={expandedSections.speech}
-          onToggle={() => toggleSection("speech")}
-        />
-        
-        {expandedSections.speech && (
-          <div className="settings-expanded-content">
-            <div className="settings-two-column">
-              {/* Left Column */}
-              <div className="settings-column">
-                {/* Speech Parameters */}
-                <div className="settings-subsection">
-                  <div className="settings-subsection-title">
-                    <Volume2 size={16} />
-                    Transcription Settings
-                  </div>
-                  <div className="m3-field-group">
-                    <div className="m3-text-field">
-                      <label className="m3-text-field-label">Default Backend</label>
-                      <select
-                        className="m3-input"
-                        value={speechSettings.backendPreference || "auto"}
-                        onChange={(e) => updateSpeechSetting("backendPreference", e.target.value)}
-                      >
-                        <option value="auto">Auto - GPU if installed</option>
-                        <option value="vulkan">Vulkan GPU</option>
-                        <option value="metal">Metal GPU</option>
-                        <option value="cpu">CPU</option>
-                      </select>
-                      <span className="settings-option-desc" style={{ marginTop: "4px", display: "block" }}>
-                        Auto uses a GPU whisper.cpp backend when its binary exists, then falls back to CPU.
-                      </span>
-                    </div>
+        <div className="page-section-label settings-group-label">Transcription</div>
+        <ul className="row-list">
+          <SettingRow
+            title="Default backend"
+            description="Auto uses a GPU whisper.cpp build when installed, then falls back to CPU"
+            htmlFor="settings-speech-backend"
+          >
+            <Select
+              id="settings-speech-backend"
+              value={speechSettings.backendPreference || "auto"}
+              onChange={(e) => updateSpeechSetting("backendPreference", e.target.value)}
+            >
+              <option value="auto">Auto (GPU if installed)</option>
+              <option value="vulkan">Vulkan GPU</option>
+              <option value="metal">Metal GPU</option>
+              <option value="cpu">CPU</option>
+            </Select>
+          </SettingRow>
+          <SettingRow
+            title="Default language"
+            description="Language of the audio. Auto detect is recommended"
+            htmlFor="settings-speech-language"
+          >
+            <Select
+              id="settings-speech-language"
+              value={speechSettings.language || "auto"}
+              onChange={(e) => updateSpeechSetting("language", e.target.value)}
+            >
+              {SPEECH_LANGUAGES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </Select>
+          </SettingRow>
+          <SettingRow title="CPU threads" description="Threads used for transcription. Recommended 4">
+            <Slider
+              label="CPU threads"
+              value={speechSettings.threads || 4}
+              min={1}
+              max={specs?.cpu_cores_logical || 16}
+              onChange={(e) => updateSpeechSetting("threads", parseInt(e.target.value))}
+            />
+          </SettingRow>
+        </ul>
 
-                    <div className="m3-text-field">
-                      <label className="m3-text-field-label">Default Language</label>
-                      <select 
-                        className="m3-input" 
-                        value={speechSettings.language || "auto"} 
-                        onChange={(e) => updateSpeechSetting("language", e.target.value)}
-                      >
-                        {SPEECH_LANGUAGES.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="settings-option-desc" style={{ marginTop: "4px", display: "block" }}>
-                        Default language for transcribing audio. (Recommended: Auto detect)
-                      </span>
-                    </div>
-
-                    <div className="m3-slider-group">
-                      <div className="m3-slider-header">
-                        <span className="m3-slider-label">CPU Threads</span>
-                        <span className="settings-value-badge">{speechSettings.threads || 4}</span>
-                      </div>
-                      <input
-                        type="range"
-                        className="m3-slider"
-                        value={speechSettings.threads || 4}
-                        onChange={(e) => updateSpeechSetting("threads", parseInt(e.target.value))}
-                        min="1"
-                        max={specs?.cpu_cores_logical || 16}
-                        style={getSliderStyle(speechSettings.threads || 4, 1, specs?.cpu_cores_logical || 16)}
-                      />
-                      <span className="settings-option-desc">
-                        Number of threads to allocate for transcription. (Recommended: 4)
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column */}
-              <div className="settings-column">
-                {/* Translation options */}
-                <div className="settings-subsection">
-                  <div className="settings-subsection-title">
-                    <Sparkles size={16} />
-                    Translation Settings
-                  </div>
-                  <div className="m3-field-group">
-                    <PremiumToggle
-                      checked={speechSettings.translate === true}
-                      onChange={(val) => updateSpeechSetting("translate", val)}
-                      label="Translate to English"
-                      description="Auto-translate foreign languages to English during transcription"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="page-section-label settings-group-label">Translation</div>
+        <ul className="row-list">
+          <SettingRow title="Translate to English" description="Translate other languages to English while transcribing">
+            <Switch
+              label="Translate to English"
+              checked={speechSettings.translate === true}
+              onChange={(val) => updateSpeechSetting("translate", val)}
+            />
+          </SettingRow>
+        </ul>
       </>
     );
   };
 
-  // ─── Appearance Settings ───
+  // ─── Text to Speech Settings ───
   const renderTtsSettings = () => {
     const TTS_VOICES = [
       { value: "af_heart", label: "Heart - Female, US English" },
@@ -1420,223 +1140,145 @@ function Settings({
 
     return (
       <>
-        <SectionHeader
-          icon={Volume2}
-          title="Text to Speech"
-          count={2}
-          color="#8b5cf6"
-          isExpanded={expandedSections.tts}
-          onToggle={() => toggleSection("tts")}
-        />
-
-        {expandedSections.tts && (
-          <div className="settings-expanded-content">
-            <div className="settings-two-column">
-              <div className="settings-column">
-                <div className="settings-subsection">
-                  <div className="settings-subsection-title">
-                    <Volume2 size={16} />
-                    Voice Defaults
-                  </div>
-                  <div className="m3-field-group">
-                    <div className="m3-text-field">
-                      <label className="m3-text-field-label">Default Voice</label>
-                      <select
-                        className="m3-input"
-                        value={ttsSettings?.voice || "af_heart"}
-                        onChange={(e) => updateTtsSetting("voice", e.target.value)}
-                      >
-                        {TTS_VOICES.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="settings-option-desc" style={{ marginTop: "4px", display: "block" }}>
-                        Default Kokoro voice for generated WAV files.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="settings-column">
-                <div className="settings-subsection">
-                  <div className="settings-subsection-title">
-                    <Gauge size={16} />
-                    Speech Timing
-                  </div>
-                  <div className="m3-slider-group">
-                    <div className="m3-slider-header">
-                      <span className="m3-slider-label">Speed</span>
-                      <span className="settings-value-badge">{(ttsSettings?.speed || 1).toFixed(2)}x</span>
-                    </div>
-                    <input
-                      type="range"
-                      className="m3-slider"
-                      value={ttsSettings?.speed || 1}
-                      onChange={(e) => updateTtsSetting("speed", parseFloat(e.target.value))}
-                      min="0.5"
-                      max="2"
-                      step="0.05"
-                      style={getSliderStyle(ttsSettings?.speed || 1, 0.5, 2)}
-                    />
-                    <span className="settings-option-desc">
-                      1.00x is natural speed. Lower values are slower, higher values are faster.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="page-section-label settings-group-label">Text to speech</div>
+        <ul className="row-list">
+          <SettingRow
+            title="Default voice"
+            description="Kokoro voice used for generated audio"
+            htmlFor="settings-tts-voice"
+          >
+            <Select
+              id="settings-tts-voice"
+              value={ttsSettings?.voice || "af_heart"}
+              onChange={(e) => updateTtsSetting("voice", e.target.value)}
+            >
+              {TTS_VOICES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </Select>
+          </SettingRow>
+          <SettingRow title="Speed" description="1.00x is natural speed">
+            <Slider
+              label="Speed"
+              value={ttsSettings?.speed || 1}
+              min={0.5}
+              max={2}
+              step={0.05}
+              display={`${(ttsSettings?.speed || 1).toFixed(2)}x`}
+              onChange={(e) => updateTtsSetting("speed", parseFloat(e.target.value))}
+            />
+          </SettingRow>
+        </ul>
       </>
     );
   };
 
+  // ─── Appearance Settings ───
   const renderAppearanceSettings = () => (
     <>
-      <SectionHeader 
-        icon={Palette} 
-        title="Appearance & Themes" 
-        count={2}
-        color="var(--md-sys-color-primary)"
-        isExpanded={expandedSections.appearance}
-        onToggle={() => toggleSection("appearance")}
-      />
-      
-      {expandedSections.appearance && (
-        <div className="settings-expanded-content">
-          <div className="settings-subsection">
-            {/* Color Themes Sub-section */}
-            <div className="settings-subsection-title">
-              <Palette size={16} />
-              Color Themes
-            </div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-              gap: "14px",
-              marginTop: "14px"
-            }}>
-              {THEMES.map((t) => {
-                const isActive = theme === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setTheme(t.id)}
-                    className={`theme-card-btn ${isActive ? "active" : ""}`}
-                    style={{
-                      background: t.bg,
-                      color: t.type === "dark" ? "#f4f4f5" : "#0f172a",
-                      border: isActive ? "2px solid var(--md-sys-color-primary)" : "1px solid var(--border-color)",
-                      borderRadius: "14px",
-                      padding: "18px",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      position: "relative",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "14px",
-                      boxShadow: isActive ? "0 4px 16px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)" : "none",
-                      transition: "all 0.25s ease",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-                      <span style={{ fontWeight: 700, fontSize: "0.88rem", letterSpacing: "-0.01em" }}>{t.name}</span>
-                      {isActive && (
-                        <div style={{
-                          background: "linear-gradient(135deg, var(--md-sys-color-primary), var(--md-sys-color-secondary))",
-                          color: "var(--md-sys-color-on-primary)",
-                          borderRadius: "50%",
-                          width: "22px",
-                          height: "22px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: "0 2px 6px color-mix(in srgb, var(--md-sys-color-primary) 40%, transparent)"
-                        }}>
-                          <Check size={13} strokeWidth={3} />
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Preview circles for primary and secondary colors */}
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                      <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.primary, border: "2px solid rgba(255,255,255,0.25)", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }} title="Primary" />
-                      <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.secondary, border: "2px solid rgba(255,255,255,0.25)", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }} title="Secondary" />
-                      <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: t.bg, border: "1.5px solid rgba(0,0,0,0.12)", boxShadow: "inset 0 2px 4px rgba(0,0,0,0.06)" }} title="Background" />
-                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", opacity: 0.6, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                        {t.type}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Divider separating sub-sections inside the single card */}
-            <div style={{
-              height: "1px",
-              background: "var(--border-color)",
-              margin: "24px 0"
-            }} />
-
-            {/* Text & Interface Size Sub-section */}
-            <div className="settings-subsection-title">
-              <Type size={16} />
-              Text & Interface Size
-            </div>
-            <div className="m3-slider-group" style={{ maxWidth: "480px", marginTop: "14px" }}>
-              <div className="m3-slider-header">
-                <span className="m3-slider-label">Font Size</span>
-                <span className="settings-value-badge">{fontSize || 16}px</span>
-              </div>
-              <input
-                type="range"
-                className="m3-slider"
-                value={fontSize || 16}
-                onChange={(e) => setFontSize(parseInt(e.target.value))}
-                min="12"
-                max="24"
-                step="1"
-                style={getSliderStyle(fontSize || 16, 12, 24)}
-              />
-              <span className="settings-option-desc">
-                Adjusts the global font size of the application text, including chat replies and settings labels. Default is 16px.
+      <div className="page-section-label settings-group-label">Theme</div>
+      <div className="settings-theme-grid" role="group" aria-label="Theme">
+        {THEMES.map((t) => {
+          const isActive = theme === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTheme(t.id)}
+              className={`settings-theme-card ${t.type === "dark" ? "is-dark" : "is-light"}`}
+              aria-pressed={isActive}
+              style={{ "--theme-bg": t.bg, "--theme-primary": t.primary, "--theme-secondary": t.secondary }}
+            >
+              <span className="settings-theme-preview" aria-hidden="true">
+                <span className="settings-theme-swatch swatch-primary" />
+                <span className="settings-theme-swatch swatch-secondary" />
+                {isActive && (
+                  <span className="settings-theme-check">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                )}
               </span>
-            </div>
-          </div>
-        </div>
-      )}
+              <span className="settings-theme-name">{t.name}</span>
+              <span className="settings-theme-type">{t.type === "dark" ? "Dark" : "Light"}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="page-section-label settings-group-label">Text</div>
+      <ul className="row-list">
+        <SettingRow title="Text size" description="Size of text across the app, including chat replies. Default is 16px">
+          <Slider
+            label="Text size"
+            value={fontSize || 16}
+            min={12}
+            max={24}
+            step={1}
+            display={`${fontSize || 16}px`}
+            onChange={(e) => setFontSize(parseInt(e.target.value))}
+          />
+        </SettingRow>
+      </ul>
     </>
   );
 
+  const renderSection = () => {
+    switch (activeSection) {
+      case "image": return renderImageSettings();
+      case "text": return renderTextSettings();
+      case "speech": return renderSpeechSettings();
+      case "tts": return renderTtsSettings();
+      default: return renderAppearanceSettings();
+    }
+  };
+
   return (
-    <div className="workspace-area">
-      {/* Page Header */}
-      <div className="workspace-title-section">
-        <h2 className="workspace-title">Settings & Parameters</h2>
-        <p className="workspace-subtitle">
-          Configure your AI models for optimal performance.
-        </p>
+    <div className="page settings-page">
+      <div className="page-scroll">
+        <div className="page-column settings-column">
+          <header className="page-header">
+            <h1 className="page-title">Settings</h1>
+          </header>
+
+          <div
+            className="segmented settings-tabs"
+            role="tablist"
+            aria-label="Settings sections"
+            onKeyDown={handleTabKeyDown}
+          >
+            {SECTIONS.map((section) => {
+              const selected = activeSection === section.id;
+              return (
+                <button
+                  key={section.id}
+                  ref={(el) => { tabRefs.current[section.id] = el; }}
+                  type="button"
+                  role="tab"
+                  id={`settings-tab-${section.id}`}
+                  aria-selected={selected}
+                  aria-controls={`settings-panel-${section.id}`}
+                  tabIndex={selected ? 0 : -1}
+                  className="segmented-item"
+                  onClick={() => selectSection(section.id)}
+                >
+                  {section.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className="settings-panel"
+            role="tabpanel"
+            id={`settings-panel-${activeSection}`}
+            aria-labelledby={`settings-tab-${activeSection}`}
+          >
+            {renderSection()}
+          </div>
+        </div>
       </div>
-
-
-      {/* Appearance & Themes Section */}
-      {renderAppearanceSettings()}
-
-      {/* Image Settings Section */}
-      {renderImageSettings()}
-
-      {/* Text Settings Section */}
-      {renderTextSettings()}
-
-      {/* Speech Settings Section */}
-      {renderSpeechSettings()}
-
-      {/* Text to Speech Settings Section */}
-      {renderTtsSettings()}
     </div>
   );
 }

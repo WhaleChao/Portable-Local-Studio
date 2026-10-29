@@ -10,6 +10,30 @@ import TextToSpeech from "./components/TextToSpeech";
 import { cleanupCandidates, formatBytes, getCleanupCandidates, getDiagnostics, getHardwareSpecs, getHealth, getTelemetry, getBackendOptions, getBackendStatus, listGeneratedOutputs, listLlmConversations, saveLlmConversation, deleteLlmConversation, listSpeechTranscriptions, deleteSpeechTranscription, listTtsOutputs, deleteTtsOutput, stopServer } from "./services/api";
 import "./App.css";
 
+// Screens live in the URL hash (#/chat, #/chat/<id>, #/images, ...) so a refresh
+// reopens the same screen and the browser's back/forward buttons work.
+const ROUTE_TO_TAB = {
+  chat: "chat",
+  images: "generator",
+  transcribe: "speech",
+  voice: "tts",
+  models: "models",
+  settings: "settings",
+};
+const TAB_TO_ROUTE = Object.fromEntries(Object.entries(ROUTE_TO_TAB).map(([route, tab]) => [tab, route]));
+
+function readRoute() {
+  const [route, id] = window.location.hash.replace(/^#\/?/, "").split("/");
+  const tab = ROUTE_TO_TAB[route] || "chat";
+  const conversationId = tab === "chat" && id ? decodeURIComponent(id) : null;
+  return { tab, conversationId };
+}
+
+function routeHash(tab, conversationId) {
+  const route = TAB_TO_ROUTE[tab] || "chat";
+  return tab === "chat" && conversationId ? `#/${route}/${encodeURIComponent(conversationId)}` : `#/${route}`;
+}
+
 function App() {
   const dialogResolverRef = useRef(null);
   const [dialog, setDialog] = useState(null);
@@ -48,7 +72,7 @@ function App() {
   }, [theme]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState("generator");
+  const [activeTab, setActiveTab] = useState(() => readRoute().tab);
 
   // Prompts
   const [prompt, setPrompt] = useState("");
@@ -213,8 +237,29 @@ function App() {
 
   // Lifted Chat History States
   const [conversations, setConversations] = useState([]);
-  const [activeConversationId, setActiveConversationId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false); // Default hide
+  const [activeConversationId, setActiveConversationId] = useState(() => readRoute().conversationId);
+
+  // Keep the URL in step with the screen; the first sync replaces the entry so the
+  // initial load doesn't add an extra back-button step
+  useEffect(() => {
+    const hash = routeHash(activeTab, activeConversationId);
+    if (window.location.hash === hash) return;
+    if (!window.location.hash) {
+      window.history.replaceState(null, "", hash);
+    } else {
+      window.location.hash = hash;
+    }
+  }, [activeTab, activeConversationId]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const { tab, conversationId } = readRoute();
+      setActiveTab(tab);
+      if (tab === "chat") setActiveConversationId(conversationId);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
   const [sidebarVisible, setSidebarVisible] = useState(() => {
     const saved = localStorage.getItem("sidebarVisible");
     return saved !== "false";
@@ -235,10 +280,8 @@ function App() {
   }, [fontSize]);
   const [speechTranscriptions, setSpeechTranscriptions] = useState([]);
   const [selectedSpeechTranscript, setSelectedSpeechTranscript] = useState(null);
-  const [showSpeechHistory, setShowSpeechHistory] = useState(false);
   const [ttsOutputs, setTtsOutputs] = useState([]);
   const [selectedTtsOutput, setSelectedTtsOutput] = useState(null);
-  const [showTtsHistory, setShowTtsHistory] = useState(false);
 
   const sanitizeMessageForStorage = (message) => {
     if (!Array.isArray(message?.content)) return message;
@@ -677,32 +720,43 @@ function App() {
 
   // Tab contents are kept mounted to preserve loading/generation state when switching tabs
 
+  const handleNewChat = useCallback(() => {
+    setActiveConversationId(null);
+    setActiveTab("chat");
+  }, []);
+
+  const toggleSidebar = useCallback(() => setSidebarVisible((visible) => !visible), []);
+
+  // Picking Images in the sidebar always lands on its start screen, even when it is already open
+  const [imagesHomeSignal, setImagesHomeSignal] = useState(0);
+  const openTabFromSidebar = useCallback((tab) => {
+    if (tab === "generator") setImagesHomeSignal((n) => n + 1);
+    setActiveTab(tab);
+  }, []);
+
+  // The top bar only shows outside a running conversation, so chats get the full height
+  const [chatInThread, setChatInThread] = useState(false);
+  const showTopBar = !(activeTab === "chat" && chatInThread);
+
   const sidebarContent = useMemo(() => (
     <Sidebar
       collapsed={!sidebarVisible}
+      onToggleSidebar={toggleSidebar}
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      setActiveTab={openTabFromSidebar}
       specs={specs}
+      telemetry={telemetry}
+      onNewChat={handleNewChat}
       conversations={conversations}
       activeConversationId={activeConversationId}
       setActiveConversationId={setActiveConversationId}
-      showHistory={showHistory}
-      setShowHistory={setShowHistory}
       onDeleteConversation={handleDeleteConversation}
       speechTranscriptions={speechTranscriptions}
       selectedSpeechTranscript={selectedSpeechTranscript}
       setSelectedSpeechTranscript={setSelectedSpeechTranscript}
-      showSpeechHistory={showSpeechHistory}
-      setShowSpeechHistory={setShowSpeechHistory}
       onDeleteSpeechTranscription={handleDeleteSpeechTranscription}
-      ttsOutputs={ttsOutputs}
-      selectedTtsOutput={selectedTtsOutput}
-      setSelectedTtsOutput={setSelectedTtsOutput}
-      showTtsHistory={showTtsHistory}
-      setShowTtsHistory={setShowTtsHistory}
-      onDeleteTtsOutput={handleDeleteTtsOutput}
     />
-  ), [sidebarVisible, activeTab, specs, conversations, activeConversationId, showHistory, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, showSpeechHistory, handleDeleteSpeechTranscription, ttsOutputs, selectedTtsOutput, showTtsHistory, handleDeleteTtsOutput]);
+  ), [sidebarVisible, toggleSidebar, activeTab, openTabFromSidebar, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription]);
 
   const handleStopServer = useCallback(async () => {
     if (!serverRunning || isStoppingServer) return;
@@ -727,8 +781,8 @@ function App() {
       {/* Main Panel */}
       <div className="main-content">
         {/* Top telemetry specs chips bar */}
+        {showTopBar && (
         <TopStatusBar
-          telemetry={telemetry}
           serverRunning={serverRunning}
           activeModel={activeModel}
           isLlmLoaded={isLlmLoaded}
@@ -737,12 +791,14 @@ function App() {
           theme={theme}
           setTheme={setTheme}
           sidebarVisible={sidebarVisible}
-          onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
+          onToggleSidebar={toggleSidebar}
         />
+        )}
 
         {/* Dynamic Workspace Container */}
         <div style={{ display: activeTab === "generator" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
           <Generator
+            homeSignal={imagesHomeSignal}
             prompt={prompt}
             setPrompt={setPrompt}
             negativePrompt={negativePrompt}
@@ -757,6 +813,7 @@ function App() {
             generationProgress={generationProgress}
             setGenerationProgress={setGenerationProgress}
             setActiveTab={setActiveTab}
+            setActiveModel={setActiveModel}
             showAlert={showAlert}
             showConfirm={showConfirm}
             specs={specs}
@@ -795,10 +852,12 @@ function App() {
             setConversations={setConversations}
             activeConversationId={activeConversationId}
             setActiveConversationId={setActiveConversationId}
-            showHistory={showHistory}
-            setShowHistory={setShowHistory}
             saveConversationState={saveConversationState}
             setIsLlmLoaded={setIsLlmLoaded}
+            setActiveTab={setActiveTab}
+            onThreadChange={setChatInThread}
+            sidebarVisible={sidebarVisible}
+            onToggleSidebar={toggleSidebar}
           />
         </div>
 
@@ -819,6 +878,8 @@ function App() {
             showConfirm={showConfirm}
             selectedOutput={selectedTtsOutput}
             onOutputsChanged={refreshTtsOutputs}
+            outputs={ttsOutputs}
+            onDeleteOutput={handleDeleteTtsOutput}
             ttsSettings={ttsSettings}
             setTtsSettings={setTtsSettings}
           />

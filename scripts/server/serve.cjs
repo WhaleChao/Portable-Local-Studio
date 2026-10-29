@@ -11,6 +11,7 @@ const os       = require("os");
 const path     = require("path");
 const { spawn, spawnSync, execSync, exec, execFile } = require("child_process");
 const { comprehensiveWebSearch } = require("../search/core");
+const { detectModelKindCached } = require("./model-kind.cjs");
 
 // HTTP keep-alive agent for llama-server (eliminates TCP handshake per request)
 const llmHttpAgent = new http.Agent({
@@ -2025,20 +2026,46 @@ function readdirVisible(dir) {
   return fs.readdirSync(dir).filter((name) => !name.startsWith("._"));
 }
 
+// Models can be linked in place from elsewhere on disk instead of copied in (POST /api/link-model).
+// A link reports where its file lives, and whether that file has since been moved or deleted.
+function describeLinkedModel(fullPath) {
+  try {
+    if (!fs.lstatSync(fullPath).isSymbolicLink()) return {};
+    const target = path.resolve(path.dirname(fullPath), fs.readlinkSync(fullPath));
+    return { linkedFrom: target, missing: !fs.existsSync(target) };
+  } catch (_) {
+    return {};
+  }
+}
+
+// The app's folder for each model type, and which loaded model would block moving a file out of it
+function modelFolderFor(kind) {
+  return { image: MODELS, text: LLM_MODELS, speech: SPEECH_MODELS }[kind] || null;
+}
+
+// "detectedKind" lets the UI spot a model filed under the wrong type (a text GGUF on the Image tab)
+function detectedKindFor(fullPath, link = {}) {
+  return link.missing ? "unknown" : detectModelKindCached(fullPath).kind;
+}
+
 function getLlmModels() {
   try {
     return readdirVisible(LLM_MODELS)
       .filter((filename) => filename.toLowerCase().endsWith(".gguf"))
       .map((filename) => {
-        const stats = fs.statSync(path.join(LLM_MODELS, filename));
+        const fullPath = path.join(LLM_MODELS, filename);
+        const link = describeLinkedModel(fullPath);
+        const sizeBytes = link.missing ? 0 : fs.statSync(fullPath).size;
         const lower = filename.toLowerCase();
         return {
           filename,
           name: filename,
-          sizeBytes: stats.size,
-          size: formatBytes(stats.size),
+          sizeBytes,
+          size: link.missing ? "" : formatBytes(sizeBytes),
           format: "GGUF",
           isProjector: lower.includes("mmproj"),
+          detectedKind: detectedKindFor(fullPath, link),
+          ...link,
         };
       });
   } catch (_) {
@@ -2152,8 +2179,12 @@ function getSpeechModels() {
     custom = readdirVisible(SPEECH_MODELS)
       .filter((filename) => filename.toLowerCase().endsWith(".bin") && !known.has(filename.toLowerCase()))
       .map((filename) => {
-        const sizeBytes = getPathSize(path.join(SPEECH_MODELS, filename));
+        const fullPath = path.join(SPEECH_MODELS, filename);
+        const link = describeLinkedModel(fullPath);
+        const sizeBytes = link.missing ? 0 : getPathSize(fullPath);
         return {
+          ...link,
+          detectedKind: detectedKindFor(fullPath, link),
           id: filename,
           name: filename,
           filename,
@@ -2401,6 +2432,8 @@ function saveTtsOutput(result) {
     audioFile: wavFilename,
     metadata: jsonFilename,
     displayName: result.displayName || `${result.voiceName || result.voice} - ${createdAt}`,
+    // Where each sentence starts and ends in the audio, for word highlighting during playback
+    ...(Array.isArray(result.segments) && result.segments.length ? { segments: result.segments } : {}),
   };
   fs.writeFileSync(path.join(TTS_OUTPUTS, jsonFilename), JSON.stringify(metadata, null, 2), "utf8");
   return {
@@ -2478,16 +2511,18 @@ function synthesizeTts(text, options = {}) {
       cacheDir: TTS_CACHE,
     };
 
+    const startedAt = Date.now();
     ttsGenerationState = {
       active: true,
-      phase: "Generating speech...",
+      phase: "Loading voice model",
       progress: -1,
+      done: 0,
+      total: 0,
+      startedAt,
       model: model.filename,
       voice,
       output: "",
     };
-
-    const startedAt = Date.now();
     const proc = spawn(process.execPath, [TTS_WORKER], {
       cwd: ROOT,
       stdio: "pipe",
@@ -2501,15 +2536,39 @@ function synthesizeTts(text, options = {}) {
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (data) => { stdout += data.toString(); });
+    // The worker reports "@@progress {...}" lines on stderr; everything else is ordinary log output
+    let stderrLine = "";
     proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-      process.stderr.write("  [tts] " + data.toString());
+      stderrLine += data.toString();
+      const lines = stderrLine.split("\n");
+      stderrLine = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith("@@progress ")) {
+          try {
+            const update = JSON.parse(line.slice("@@progress ".length));
+            const total = Number(update.total) || 0;
+            const done = Number(update.done) || 0;
+            ttsGenerationState = {
+              ...ttsGenerationState,
+              phase: update.phase === "loading" ? "Loading voice model" : update.phase === "saving" ? "Saving" : "Generating speech",
+              progress: update.phase === "loading" || total === 0 ? -1 : Math.min(99, Math.round((done / total) * 100)),
+              done,
+              total,
+            };
+          } catch (_) {}
+          continue;
+        }
+        stderr += line + "\n";
+        process.stderr.write("  [tts] " + line + "\n");
+      }
     });
     proc.on("error", (err) => {
       ttsGenerationState = { active: false, phase: "Failed", progress: 0, model: model.filename, voice, output: "" };
       reject(err);
     });
     proc.on("exit", (code) => {
+      // An error stack usually arrives without a trailing newline
+      if (stderrLine) stderr += stderrLine;
       ttsGenerationState = { active: false, phase: code === 0 ? "Complete" : "Failed", progress: code === 0 ? 100 : 0, model: model.filename, voice, output: "" };
       if (code !== 0) {
         try { fs.unlinkSync(tempWav); } catch (_) {}
@@ -2530,9 +2589,11 @@ function synthesizeTts(text, options = {}) {
           voice,
           voiceName: voiceInfo.name,
           speed,
-          durationMs: Date.now() - startedAt,
+          // Length of the audio itself; older workers only let us time the generation
+          durationMs: workerResult.durationMs || Date.now() - startedAt,
           sampleRate: workerResult.sampleRate || 24000,
           wavPath: tempWav,
+          segments: workerResult.segments,
           displayName: `${voiceInfo.name || voice} - ${cleanedText.slice(0, 40)}`,
         });
         try { fs.unlinkSync(tempWav); } catch (_) {}
@@ -2741,6 +2802,12 @@ function transcribeWavBuffer(buffer, options = {}) {
       } catch (_) {}
       try { fs.unlinkSync(txtPath); } catch (_) {}
       try { fs.unlinkSync(jsonPath); } catch (_) {}
+      // Dictation (the Voice screen's mic) only wants the text, not a saved transcript
+      if (options.save === false) {
+        speechError = null;
+        resolve({ text, model: model.filename, language, durationMs: Date.now() - startedAt });
+        return;
+      }
       const saved = saveTranscript({
         text,
         model: model.filename,
@@ -5717,6 +5784,10 @@ function describeBackendExitCode(code, backendPath) {
 function getModelInfo(filename) {
   const safeFilename = path.basename(filename || "");
   const fullPath = path.join(MODELS, safeFilename);
+  const link = describeLinkedModel(fullPath);
+  if (link.missing) {
+    return { filename: safeFilename, sizeBytes: 0, size: "", ...link };
+  }
   const stats = fs.statSync(fullPath);
   
   if (stats.isDirectory()) {
@@ -5733,6 +5804,8 @@ function getModelInfo(filename) {
     filename: safeFilename,
     sizeBytes: stats.size,
     size: formatBytes(stats.size),
+    detectedKind: detectedKindFor(fullPath, link),
+    ...link,
   };
 }
 
@@ -6317,6 +6390,7 @@ const server = http.createServer(async (req, res) => {
         threads: parsed.searchParams.get("threads") || speechSettings.threads,
         backendPreference: parsed.searchParams.get("backendPreference") || speechSettings.backendPreference,
         translate: parsed.searchParams.get("translate") === "true",
+        save: parsed.searchParams.get("save") !== "false",
       }));
       return json(res, 200, { ok: true, transcription: result });
     } catch (err) {
@@ -7427,6 +7501,145 @@ async function getLlmfitRecommendations(useCase = "chat", limit = 10) {
     }
   }
 
+  // POST /api/move-model { filename, from, to }: refile a model under the right type (a text GGUF
+  // sitting with the image models). Moving a linked model moves only the link.
+  if (req.url === "/api/move-model" && req.method === "POST") {
+    const body = await readJsonBody(req, res);
+    if (!body) return;
+    const filename = path.basename(String(body.filename || ""));
+    const fromDir = modelFolderFor(String(body.from || ""));
+    const toDir = modelFolderFor(String(body.to || ""));
+    if (!filename || !fromDir || !toDir || fromDir === toDir) {
+      return json(res, 400, { ok: false, error: "Choose a model and where to move it." });
+    }
+    const loaded = (body.from === "image" && currentSettings.model === filename && backendProc)
+      || (body.from === "text" && llmSettings.model === filename && llmProc)
+      || (body.from === "speech" && speechSettings.model === filename && speechReady);
+    if (loaded) return json(res, 409, { ok: false, error: "Unload the model before moving it." });
+    const fromPath = path.join(fromDir, filename);
+    const toPath = path.join(toDir, filename);
+    if (!fs.existsSync(fromPath) && !describeLinkedModel(fromPath).linkedFrom) {
+      return json(res, 404, { ok: false, error: "Model not found." });
+    }
+    if (fs.existsSync(toPath) || describeLinkedModel(toPath).linkedFrom) {
+      return json(res, 409, { ok: false, error: `${filename} is already there.` });
+    }
+    try {
+      fs.mkdirSync(toDir, { recursive: true });
+      fs.renameSync(fromPath, toPath);
+      cachedBackendOptions = null;
+      console.log(`  [api] Moved model ${filename} from ${body.from} to ${body.to}`);
+      return json(res, 200, { ok: true, filename });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: `Couldn't move the model: ${err.message}` });
+    }
+  }
+
+  // POST /api/pick-model-file { type }: open the system's own file dialog and return the chosen path.
+  // The page can't learn a file's real location from a browser picker, but this server runs on the same machine.
+  if (req.url === "/api/pick-model-file" && req.method === "POST") {
+    const body = await readJsonBody(req, res);
+    if (!body) return;
+    const extensions = { image: ["safetensors", "ckpt", "gguf"], text: ["gguf"], speech: ["bin"] }[String(body.type || "image")];
+    if (!extensions) return json(res, 400, { ok: false, error: "Browsing is available for image, text and speech models." });
+    const prompt = "Choose a model file to use from where it is";
+    let command;
+    let args;
+    if (process.platform === "darwin") {
+      // "activate" brings the dialog in front of the browser
+      command = "osascript";
+      args = ["-e", "activate", "-e", `POSIX path of (choose file with prompt ${JSON.stringify(prompt)})`];
+    } else if (process.platform === "win32") {
+      const filter = `Model files (${extensions.map((ext) => `*.${ext}`).join(", ")})|${extensions.map((ext) => `*.${ext}`).join(";")}`;
+      command = "powershell";
+      args = ["-NoProfile", "-STA", "-Command", [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "$d = New-Object System.Windows.Forms.OpenFileDialog",
+        `$d.Title = '${prompt}'`,
+        `$d.Filter = '${filter}'`,
+        "$f = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}",
+        "if ($d.ShowDialog($f) -eq 'OK') { [Console]::Out.Write($d.FileName) }",
+      ].join("; ")];
+    } else {
+      command = "zenity";
+      args = ["--file-selection", `--title=${prompt}`, `--file-filter=Model files | ${extensions.map((ext) => `*.${ext}`).join(" ")}`];
+    }
+    execFile(command, args, { timeout: 10 * 60 * 1000, windowsHide: false }, (err, stdout) => {
+      const picked = String(stdout || "").trim();
+      if (picked) return json(res, 200, { ok: true, path: picked });
+      // Closing the dialog is not an error; a missing helper (no zenity on Linux) is
+      if (err && err.code === "ENOENT") {
+        return json(res, 501, { ok: false, error: "This system has no file dialog helper. Paste the path instead." });
+      }
+      return json(res, 200, { ok: true, path: "", cancelled: true });
+    });
+    return;
+  }
+
+  // POST /api/link-model { path, type }: use a model file where it already is, without copying it
+  if (req.url === "/api/link-model" && req.method === "POST") {
+    const body = await readJsonBody(req, res);
+    if (!body) return;
+    const type = String(body.type || "image");
+    const targets = {
+      image: { dir: MODELS, valid: (name) => /\.(safetensors|ckpt|gguf)$/i.test(name), hint: ".safetensors, .ckpt or .gguf" },
+      text: { dir: LLM_MODELS, valid: (name) => /\.gguf$/i.test(name), hint: ".gguf" },
+      speech: { dir: SPEECH_MODELS, valid: (name) => /\.bin$/i.test(name), hint: ".bin" },
+    };
+    const target = targets[type];
+    if (!target) return json(res, 400, { ok: false, error: "Linking is available for image, text and speech models." });
+
+    // Accept what Finder (Option-Command-C) or Explorer ("Copy as path") puts on the clipboard
+    let source = String(body.path || "").trim().replace(/^["']|["']$/g, "");
+    if (source.startsWith("file://")) source = decodeURIComponent(new URL(source).pathname);
+    if (source.startsWith("~")) source = path.join(os.homedir(), source.slice(1));
+    if (!source || !path.isAbsolute(source)) {
+      return json(res, 400, { ok: false, error: "Paste the full path to the file, starting from the drive or your home folder." });
+    }
+    let stats;
+    try {
+      stats = fs.statSync(source);
+    } catch (_) {
+      return json(res, 404, { ok: false, error: `Nothing was found at ${source}.` });
+    }
+    const filename = path.basename(source);
+    // File it by what it actually is, not by the tab it was added from
+    const detected = stats.isFile() ? detectModelKindCached(source) : { kind: "unknown" };
+    const kind = targets[detected.kind] && targets[detected.kind].valid(filename) ? detected.kind : type;
+    const chosen = targets[kind];
+    if (!stats.isFile() || !chosen.valid(filename)) {
+      return json(res, 400, { ok: false, error: `That isn't a ${type} model file. Choose a ${target.hint} file.` });
+    }
+    if (pathInside(source, chosen.dir)) {
+      return json(res, 400, { ok: false, error: "That file is already in the app's models folder." });
+    }
+    const dest = path.join(chosen.dir, filename);
+    if (fs.existsSync(dest) || describeLinkedModel(dest).linkedFrom) {
+      return json(res, 409, { ok: false, error: `A model named ${filename} is already in the app.` });
+    }
+    try {
+      fs.mkdirSync(chosen.dir, { recursive: true });
+      try {
+        fs.symlinkSync(source, dest, "file");
+      } catch (err) {
+        // Windows only allows symlinks in Developer Mode; a hard link also uses no extra space on the same drive
+        if (err.code !== "EPERM" && err.code !== "EACCES") throw err;
+        fs.linkSync(source, dest);
+      }
+      cachedBackendOptions = null;
+      console.log(`  [api] Linked ${kind} model in place: ${source}`);
+      return json(res, 200, { ok: true, filename, linkedFrom: source, kind, detail: detected.detail || "" });
+    } catch (err) {
+      const crossDrive = err.code === "EXDEV";
+      return json(res, 500, {
+        ok: false,
+        error: crossDrive
+          ? "This system can't link to a file on another drive. Use Import a copy instead."
+          : `Couldn't link the file: ${err.message}`,
+      });
+    }
+  }
+
   // POST /api/delete-model
   if (req.url === "/api/delete-model" && req.method === "POST") {
     const body = await readJsonBody(req, res);
@@ -7444,7 +7657,8 @@ async function getLlmfitRecommendations(useCase = "chat", limit = 10) {
         cachedBackendOptions = null;
         console.log(`  [api] Deleted OpenVINO model: ${openvinoModel.id}`);
         return json(res, 200, { ok: true, message: `Deleted ${openvinoModel.name}` });
-      } else if (fs.existsSync(modelPath)) {
+      } else if (fs.existsSync(modelPath) || describeLinkedModel(modelPath).linkedFrom) {
+        // For a linked model this removes only the link; the original file stays where it is
         fs.unlinkSync(modelPath);
         console.log(`  [api] Deleted model file: ${safeFilename}`);
         return json(res, 200, { ok: true, message: `Deleted ${safeFilename}` });

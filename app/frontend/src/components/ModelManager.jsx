@@ -1,5 +1,6 @@
 import React, { memo, useState, useEffect, useCallback } from "react";
-import { FolderOpen, DownloadCloud, RefreshCw, Database, Trash2, Square, HardDrive, Library, AlertTriangle, Search, X } from "lucide-react";
+import { FolderOpen, DownloadCloud, Loader2, Trash2, Square, AlertTriangle, Search, X, Link, Link2, HardDrive, Copy, Plus, MoreHorizontal, ExternalLink, Check } from "lucide-react";
+import "../styles/models.css";
 import { 
   listLocalModels, 
   startServer, 
@@ -35,9 +36,79 @@ import {
   downloadTtsModel,
   deleteTtsModel,
   importTtsModel,
+  linkModelFile,
+  moveModelFile,
+  pickModelFile,
   getTtsStatus,
   isLocalServerMode
 } from "../services/api";
+
+const kindLabel = (kind) => ({ image: "Image", text: "Text", speech: "Speech", tts: "Voice" }[kind] || "Other");
+
+// "/Users/me/Downloads/Models/x.safetensors" -> "~/Downloads/Models"; keeps link labels short
+function shortPath(fullPath) {
+  const folder = String(fullPath || "").replace(/[\\/][^\\/]*$/, "");
+  return folder.replace(/^\/Users\/[^/]+/, "~").replace(/^[A-Z]:\\Users\\[^\\]+/i, "~") || folder;
+}
+
+// ---- Readable model names ----
+// "realisticVisionV60B1_v51HyperVAE.safetensors" -> "Realistic Vision V60B1 V51" plus details
+// "Hyper · VAE included". Precision, quantization and baked-in extras move to the meta line.
+const MODEL_DETAIL_WORDS = {
+  fp16: "FP16",
+  fp32: "FP32",
+  bf16: "BF16",
+  vae: "VAE included",
+  hyper: "Hyper",
+  lightning: "Lightning",
+  turbo: "Turbo",
+  pruned: "Pruned",
+  onnx: "ONNX",
+  ema: null,
+  emaonly: null,
+};
+
+function describeModelFile(filename, fallbackName) {
+  const base = String(filename || "").replace(/\.(safetensors|ckpt|gguf|bin|json|onnx|pt|pth)$/i, "");
+  const details = [];
+  let rest = base;
+  // "mmproj-..." files are the vision add-on that lets a text model read images
+  if (/^mmproj[-_]/i.test(rest)) {
+    details.push("Vision add-on");
+    rest = rest.replace(/^mmproj[-_]/i, "");
+  }
+  const quant = rest.match(/(?:^|[-_.])((?:I?Q\d+(?:_[A-Z0-9]+)*)|F16|F32)$/i);
+  if (quant) {
+    details.push(quant[1].toUpperCase());
+    rest = rest.slice(0, quant.index);
+  }
+  const words = [];
+  rest.split(/[-_\s]+/).filter(Boolean).forEach((token) => {
+    // Split camelCase only in names written that way ("realisticVision"), not "CyberRealistic"
+    // and keep version codes like "V60B1" together
+    const parts = /^[a-z]/.test(token)
+      ? token
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/(\d)([A-Z][a-z])/g, "$1 $2")
+        .replace(/([a-z\d])(VAE|FP16|FP32|BF16)$/, "$1 $2")
+        .split(" ")
+      : [token];
+    parts.forEach((part) => {
+      const key = part.toLowerCase();
+      if (key in MODEL_DETAIL_WORDS) {
+        const label = MODEL_DETAIL_WORDS[key];
+        if (label && !details.includes(label)) details.push(label);
+        return;
+      }
+      words.push(/^[a-z]/.test(part) ? part[0].toUpperCase() + part.slice(1) : part);
+    });
+  });
+  const cleanFallback = fallbackName && fallbackName !== filename && !/\.(safetensors|ckpt|gguf|bin|json)$/i.test(fallbackName)
+    ? fallbackName
+    : "";
+  return { title: cleanFallback || words.join(" ") || base || "Untitled model", details: cleanFallback ? [] : details };
+}
+
 
 const MODEL_FILTERS = [
   { id: "vision", label: "Vision" },
@@ -46,7 +117,7 @@ const MODEL_FILTERS = [
 
 const MODEL_LIBRARY = [
   {
-    group: "SDXL - Best Quality",
+    group: "SDXL — best quality",
     items: [
       {
         name: "Juggernaut XL v9 Lightning",
@@ -71,7 +142,7 @@ const MODEL_LIBRARY = [
     ],
   },
   {
-    group: "SD 1.5 - Ultra Fast / Low Memory",
+    group: "SD 1.5 — fast, low memory",
     items: [
       {
         name: "DreamShaper 8",
@@ -109,7 +180,7 @@ const MODEL_LIBRARY = [
 
 const TEXT_MODEL_LIBRARY = [
   {
-    group: "Recommended Text Models (llama.cpp)",
+    group: "Recommended text models (llama.cpp)",
     items: [
       {
         name: "Qwen2.5 Coder 0.5B Instruct Q4_K_M",
@@ -198,7 +269,7 @@ const TEXT_MODEL_LIBRARY = [
 
 const OPENVINO_MODEL_LIBRARY = [
   {
-    group: "Intel NPU - OpenVINO Test",
+    group: "Intel NPU — OpenVINO test",
     items: [
       {
         id: "lcm-dreamshaper-v7-fp16",
@@ -217,7 +288,7 @@ const OPENVINO_MODEL_LIBRARY = [
 
 const TTS_MODEL_LIBRARY = [
   {
-    group: "Kokoro Text-to-Speech Models",
+    group: "Kokoro text-to-speech",
     items: [
       {
         id: "kokoro-onnx-q8",
@@ -249,7 +320,7 @@ const TTS_MODEL_LIBRARY = [
 
 const COREML_MODEL_LIBRARY = [
   {
-    group: "Apple Silicon NPU - CoreML Test",
+    group: "Apple Silicon NPU — CoreML test",
     items: [
       {
         name: "Stable Diffusion v1.5 CoreML (split_einsum, palettized 6-bit)",
@@ -344,6 +415,15 @@ function ModelManager({
   const [hasMoreModels, setHasMoreModels] = useState(false);
   const [isLoadingMoreModels, setIsLoadingMoreModels] = useState(false);
   const searchRequestRef = React.useRef(0);
+  // "Add model" opens the URL / import form; rowMenu is the filename whose "..." menu is open
+  const [addOpen, setAddOpen] = useState(false);
+  // How the add panel adds a model: "link" (download URL), "inplace" (use a file where it is), "import" (copy)
+  const [addMethod, setAddMethod] = useState("link");
+  const [linkPath, setLinkPath] = useState("");
+  const [isLinking, setIsLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [isPicking, setIsPicking] = useState(false);
+  const [rowMenu, setRowMenu] = useState(null);
   const pendingCompanionDownloadRef = React.useRef(null);
 
   const cancelLoadRef = React.useRef(false);
@@ -382,7 +462,7 @@ function ModelManager({
     if (type === "image") return "Image";
     if (type === "text") return "Text";
     if (type === "speech") return "Speech";
-    if (type === "tts") return "TTS";
+    if (type === "tts") return "Voice";
     return "Model";
   };
 
@@ -435,12 +515,12 @@ function ModelManager({
     }
   } else if (activeModelType === "text") {
     visibleModelLibrary = [{
-      group: "Recommended Text Models from Hugging Face",
+      group: "Recommended text models from Hugging Face",
       items: hasHuggingFaceResults ? displayedHuggingFaceModels : TEXT_MODEL_LIBRARY[0].items,
     }];
   } else if (activeModelType === "speech") {
     visibleModelLibrary = [{
-      group: "Whisper Speech Models",
+      group: "Whisper speech models",
       items: normalizedLocalModels.filter((model) => model.url).map((model) => ({
         ...model,
         format: "Whisper.cpp",
@@ -1341,590 +1421,803 @@ function ModelManager({
     e.target.value = "";
   };
 
+  const [movingModel, setMovingModel] = useState(null);
+
+  const handleMoveModel = async (filename, to) => {
+    setMovingModel(filename);
+    try {
+      await moveModelFile(filename, activeModelType, to);
+      setActiveModelType(to);
+      await fetchModels();
+    } catch (err) {
+      showAlert?.({ title: "Couldn't move the model", message: err.message || String(err), danger: true });
+    } finally {
+      setMovingModel(null);
+    }
+  };
+
+  const handleBrowseForFile = async () => {
+    setIsPicking(true);
+    setLinkError("");
+    try {
+      const picked = await pickModelFile(activeModelType);
+      if (picked) setLinkPath(picked);
+    } catch (err) {
+      setLinkError(err.message || String(err));
+    } finally {
+      setIsPicking(false);
+    }
+  };
+
+  const handleLinkSubmit = async (event) => {
+    event.preventDefault();
+    if (!linkPath.trim() || isLinking) return;
+    setIsLinking(true);
+    setLinkError("");
+    try {
+      const result = await linkModelFile(linkPath.trim(), activeModelType);
+      setLinkPath("");
+      setAddOpen(false);
+      setModelSearch("");
+      // The server files it by what the file really is; follow it to that tab
+      const placedElsewhere = result.kind && result.kind !== activeModelType;
+      if (placedElsewhere) setActiveModelType(result.kind);
+      await fetchModels();
+      showAlert?.({
+        title: placedElsewhere ? `Added as ${kindLabel(result.kind).toLowerCase()} model` : "Model added",
+        message: `${placedElsewhere ? `This file is ${/^[aeiou]/i.test(result.kind) ? "an" : "a"} ${result.kind} model${result.detail ? ` (${result.detail})` : ""}, so it was added to ${kindLabel(result.kind)} models. ` : ""}It stays at ${result.linkedFrom} and uses no extra space. Don't move or delete that file.`,
+      });
+    } catch (err) {
+      setLinkError(err.message || String(err));
+    } finally {
+      setIsLinking(false);
+    }
+  };
   const isUrlDownloading = Boolean(downloadingModelId);
+  const fileInputRef = React.useRef(null);
 
-  return (
-    <div className="workspace-area">
-      <div className="workspace-title-section">
-        <h2 className="workspace-title">Model Manager</h2>
-        <p className="workspace-subtitle">
-          Manage local files and download recommended weights directly to your local models folder.
-        </p>
+  // Client-side name filter for both lists. On the Text tab the same query also
+  // drives the Hugging Face search (see the effect above), so remote results are
+  // not filtered a second time.
+  const query = modelSearch.trim().toLowerCase();
+  const matchesQuery = (...values) => !query || values.some((value) => String(value || "").toLowerCase().includes(query));
+  const filteredLocalModels = displayedLocalModels.filter((model) => matchesQuery(model.filename, model.name));
+  const libraryUsesRemoteSearch = activeModelType === "text" && hasHuggingFaceResults;
+  const filteredLibrary = visibleModelLibrary
+    .map((section) => ({
+      ...section,
+      items: libraryUsesRemoteSearch
+        ? section.items
+        : section.items.filter((model) => matchesQuery(model.name, model.filename)),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const systemTier = getHardwareTier(specs);
+  const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent || navigator.platform || "");
+  const defaultFitLabel = isMac ? "Fits your Mac" : "Fits your PC";
+
+  const typeNoun = activeModelType === "tts" ? "voice" : activeModelType;
+  const importAccept = activeModelType === "image" ? ".safetensors,.ckpt" : activeModelType === "text" ? ".gguf" : activeModelType === "speech" ? ".bin" : ".json";
+  const fileTypesLabel = activeModelType === "image" ? ".safetensors or .ckpt" : activeModelType === "text" ? ".gguf" : activeModelType === "speech" ? ".bin" : ".json";
+  const canLinkInPlace = activeModelType !== "tts";
+  const isMacClient = typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent || navigator.platform || "");
+  const ADD_METHODS = [
+    { id: "link", label: "Download from a link", desc: "Paste a Hugging Face URL", Icon: DownloadCloud },
+    ...(canLinkInPlace ? [{ id: "inplace", label: "Use a file where it is", desc: "No copy, no extra space", Icon: HardDrive }] : []),
+    { id: "import", label: "Import a copy", desc: "Copies it into the app", Icon: Copy },
+  ];
+  const currentAddMethod = ADD_METHODS.some((method) => method.id === addMethod) ? addMethod : "link";
+
+  const isModelActive = (filename) => (
+    activeModelType === "image" ? activeModel === filename
+      : activeModelType === "text" ? activeLlmModel === filename
+      : activeModelType === "speech" ? activeSpeechModel === filename
+      : activeTtsModel === filename
+  );
+
+  const getLocalFormatLabel = (model) => (
+    activeModelType === "image"
+      ? (model.backendType === "openvino-npu" ? "OpenVINO NPU" : model.format || "Weights file")
+      : activeModelType === "text"
+      ? "GGUF"
+      : activeModelType === "speech"
+      ? (model.language ? `Whisper · ${model.language}` : "Whisper")
+      : "Kokoro ONNX"
+  );
+
+  const activeBackendLabel = activeModelType === "image"
+    ? [backendInfo.backendMode, backendInfo.backendDevice].filter(Boolean).join(" · ")
+    : activeModelType === "text"
+    ? backendInfo.llmBackendMode
+    : activeModelType === "speech"
+    ? backendInfo.speechBackendMode
+    : backendInfo.ttsBackendMode;
+
+  // Which local row shows the load progress (OpenVINO may report a different id).
+  const loadRowId = modelLoadProgress
+    ? displayedLocalModels.find((model) => model.filename === loadingModelId || model.filename === modelLoadProgress.model)?.filename || null
+    : null;
+  const loadRowVisible = Boolean(loadRowId && filteredLocalModels.some((model) => model.filename === loadRowId));
+
+  const isLibraryItemDownloading = (model) => (
+    downloadingModelId === model.filename ||
+    downloadingModelId === model.projectorFilename ||
+    downloadingModelId === `${model.filename}.zip` ||
+    (model.backendType === "openvino-npu" && downloadingModelId === model.name)
+  );
+  const libraryDownloadVisible = filteredLibrary.some((section) => section.items.some(isLibraryItemDownloading));
+
+  const MODEL_TYPES = [
+    { id: "image", label: "Image" },
+    { id: "text", label: "Text" },
+    { id: "speech", label: "Speech" },
+    { id: "tts", label: "Voice" },
+  ];
+
+  const handleTabKeyDown = (event, index) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const nextIndex = (index + (event.key === "ArrowRight" ? 1 : -1) + MODEL_TYPES.length) % MODEL_TYPES.length;
+    setActiveModelType(MODEL_TYPES[nextIndex].id);
+    const tabs = event.currentTarget.parentElement?.querySelectorAll('[role="tab"]');
+    tabs?.[nextIndex]?.focus();
+  };
+
+  const renderProgress = ({ label, value, valueText, detail, danger = false, ariaLabel }) => {
+    const clamped = Math.min(100, Math.max(0, Number(value) || 0));
+    return (
+      <div className="models-progress">
+        <div className="models-progress-label">
+          <span className="models-progress-phase">{label}</span>
+          <span>{valueText ?? `${Math.round(clamped)}%`}</span>
+        </div>
+        <div
+          className={`models-progress-bar ${danger ? "danger" : ""}`}
+          role="progressbar"
+          aria-label={ariaLabel || label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(clamped)}
+        >
+          <div className="models-progress-fill" style={{ width: `${clamped}%` }} />
+        </div>
+        {detail && <div className="models-progress-detail">{detail}</div>}
       </div>
+    );
+  };
 
-      {/* Tab Selector for Image vs Text */}
-      <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px", marginBottom: "20px" }}>
-        <button
-          className={`m3-btn ${activeModelType === "image" ? "m3-btn-filled" : "m3-btn-outlined"}`}
-          onClick={() => setActiveModelType("image")}
-          style={{ height: "40px", padding: "0 20px" }}
-        >
-          Image Models (SD)
-        </button>
-        <button
-          className={`m3-btn ${activeModelType === "text" ? "m3-btn-filled" : "m3-btn-outlined"}`}
-          onClick={() => setActiveModelType("text")}
-          style={{ height: "40px", padding: "0 20px" }}
-        >
-          Text Models (GGUF)
-        </button>
-        <button
-          className={`m3-btn ${activeModelType === "speech" ? "m3-btn-filled" : "m3-btn-outlined"}`}
-          onClick={() => setActiveModelType("speech")}
-          style={{ height: "40px", padding: "0 20px" }}
-        >
-          Speech Models (Whisper)
-        </button>
-        <button
-          className={`m3-btn ${activeModelType === "tts" ? "m3-btn-filled" : "m3-btn-outlined"}`}
-          onClick={() => setActiveModelType("tts")}
-          style={{ height: "40px", padding: "0 20px" }}
-        >
-          TTS Models (Kokoro)
-        </button>
-      </div>
-
-
-
-      {/* Active Model Status Tonal Box */}
-      {activeModelType === "image" && activeModel && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ fontWeight: 700 }}>Active Model: {activeModel}</h4>
-              <p style={{ fontSize: "0.85rem", marginTop: "2px", opacity: 0.9 }}>
-                The local C++ stable-diffusion server is running. Real-time telemetry is displaying performance status in the top bar.
-              </p>
-              {(backendInfo.backendMode || backendInfo.backendDevice || backendInfo.backendBinary) && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
-                  {backendInfo.backendMode && (
-                    <span className="status-chip" style={{ cursor: "default" }}>
-                      <HardDrive size={14} />
-                      <span>Loaded on {backendInfo.backendMode}</span>
-                    </span>
-                  )}
-                  {backendInfo.backendDevice && (
-                    <span className="status-chip" style={{ cursor: "default" }}>
-                      <span>{backendInfo.backendDevice}</span>
-                    </span>
-                  )}
-                  {backendInfo.backendBinary && (
-                    <span className="status-chip" style={{ cursor: "default" }}>
-                      <span>{backendInfo.backendBinary}</span>
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeModelType === "text" && activeLlmModel && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ fontWeight: 700 }}>Active Text Model: {activeLlmModel}</h4>
-              <p style={{ fontSize: "0.85rem", marginTop: "2px", opacity: 0.9 }}>
-                The local C++ llama.cpp server is running. Chat requests can be sent via the Text Chat interface.
-              </p>
-              {backendInfo.llmBackendMode && (
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
-                  <span className="status-chip" style={{ cursor: "default", background: "rgba(255,255,255,0.15)", color: "inherit", border: "1px solid rgba(255,255,255,0.2)" }}>
-                    <span>{backendInfo.llmBackendMode}</span>
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeModelType === "speech" && activeSpeechModel && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ fontWeight: 700 }}>Active Speech Model: {activeSpeechModel}</h4>
-              <p style={{ fontSize: "0.85rem", marginTop: "2px", opacity: 0.9 }}>
-                The local whisper.cpp runtime is ready. Speech Transcriber can process WAV recordings and uploads.
-              </p>
-              {backendInfo.speechBackendMode && (
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
-                  <span className="status-chip" style={{ cursor: "default", background: "rgba(255,255,255,0.15)", color: "inherit", border: "1px solid rgba(255,255,255,0.2)" }}>
-                    <span>{backendInfo.speechBackendMode}</span>
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeModelType === "tts" && activeTtsModel && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ fontWeight: 700 }}>Active TTS Model: {activeTtsModel}</h4>
-              <p style={{ fontSize: "0.85rem", marginTop: "2px", opacity: 0.9 }}>
-                The local Kokoro ONNX runtime is ready. Text to Speech can generate WAV narration.
-              </p>
-              {backendInfo.ttsBackendMode && (
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
-                  <span className="status-chip" style={{ cursor: "default", background: "rgba(255,255,255,0.15)", color: "inherit", border: "1px solid rgba(255,255,255,0.2)" }}>
-                    <span>{backendInfo.ttsBackendMode}</span>
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading Progress Bar */}
-      {modelLoadProgress && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", marginTop: "24px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h4 style={{ fontWeight: 600 }}>Loading Weights: {modelLoadProgress.model}</h4>
-            <button className="m3-btn m3-btn-error" style={{ height: "34px", padding: "0 14px" }} onClick={handleCancelLoad}>
-              <Square size={14} />
-              <span>Cancel Load</span>
-            </button>
-          </div>
-          <div className="model-progress-section" style={{ margin: "12px 0 6px 0" }}>
-            <div className="model-progress-label">
-              <span>
-                {modelLoadProgress.phase}
-                {modelLoadProgress.speed ? ` (${modelLoadProgress.speed})` : ""}
-              </span>
-              <span>
-                {modelLoadProgress.total > 0
-                  ? `Loaded ${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
-                  : `${Math.round(modelLoadProgress.progress)}%`}
-              </span>
-            </div>
-            <div className="model-progress-bar">
-              <div className="model-progress-fill" style={{ width: `${Math.min(100, Math.max(0, modelLoadProgress.progress))}%`, transition: "width 0.2s ease" }}></div>
-            </div>
-            {(modelLoadProgress.backendMode || modelLoadProgress.device) && (
-              <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "6px", lineHeight: "1.4" }}>
-                <div>
-                  Initializing {modelLoadProgress.backendMode || "backend"}
-                  {modelLoadProgress.device ? ` • ${modelLoadProgress.device}` : ""}
-                </div>
-                {(modelLoadProgress.backendMode === "Apple NPU" || modelLoadProgress.backendMode === "Apple Neural Engine (NPU)") && (
-                  <div style={{ color: "var(--md-sys-color-primary)", marginTop: "4px", fontWeight: "500" }}>
-                    ⚠️ Note: The first time loading this model, compilation on the Apple Neural Engine (NPU) can take 3–4 minutes. Subsequent loads will be almost instant.
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Unloading Progress Bar */}
-      {isUnloading && activeModelType === "image" && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-error)", marginTop: "24px" }}>
-          <h4 style={{ fontWeight: 600 }}>{unloadProgress.phase || "Unloading active model..."}</h4>
-          <div className="model-progress-section" style={{ margin: "12px 0 0 0" }}>
-            <div className="model-progress-bar">
-              <div className="model-progress-fill" style={{ width: `${unloadProgress.progress}%`, background: "var(--md-sys-color-error)", transition: "width 0.15s ease" }}></div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Detected Local Models Section */}
-      <div className="m3-card" style={{ marginTop: "24px" }}>
-        <h3 className="m3-card-title">
-          <Database size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-          Local {activeModelType === "image" ? "Image" : activeModelType === "text" ? "Text" : activeModelType === "speech" ? "Speech" : "TTS"} Models ({displayedLocalModels.length})
-        </h3>
-        
-        {isLoadingModels ? (
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "10px", padding: "24px 0", color: "var(--md-sys-color-outline)" }}>
-            <RefreshCw className="progress-spinner" size={16} />
-            <span style={{ fontSize: "0.9rem" }}>Scanning models folder...</span>
-          </div>
-        ) : displayedLocalModels.length === 0 ? (
-          <p style={{ fontSize: "0.9rem", color: "var(--md-sys-color-outline)", textAlign: "center", padding: "16px 0" }}>
-            {activeModelType === "image"
-              ? "No image models detected in app/models/. Download from the library below or import a file."
-              : activeModelType === "text"
-              ? "No text models detected in app/llm-models/. Download from the library below or import a file."
-              : activeModelType === "speech"
-              ? "No speech models detected in app/speech-models/. Download from the library below or import a .bin file."
-              : "No TTS models detected in app/tts-models/. Install Kokoro from the library below or import a .json manifest."}
+  const renderLoadProgress = () => {
+    if (!modelLoadProgress) return null;
+    const isAppleNpu = modelLoadProgress.backendMode === "Apple NPU" || modelLoadProgress.backendMode === "Apple Neural Engine (NPU)";
+    return (
+      <div className="models-inline-panel">
+        {renderProgress({
+          label: `${modelLoadProgress.phase}${modelLoadProgress.speed ? ` (${modelLoadProgress.speed})` : ""}`,
+          value: modelLoadProgress.progress,
+          valueText: modelLoadProgress.total > 0
+            ? `${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
+            : `${Math.round(modelLoadProgress.progress)}%`,
+          ariaLabel: `Loading ${modelLoadProgress.model}`,
+          detail: (modelLoadProgress.backendMode || modelLoadProgress.device)
+            ? `Starting ${modelLoadProgress.backendMode || "backend"}${modelLoadProgress.device ? ` · ${modelLoadProgress.device}` : ""}`
+            : null,
+        })}
+        {isAppleNpu && (
+          <p className="models-note">
+            <AlertTriangle size={14} aria-hidden="true" />
+            <span>The first load compiles the model for the Apple Neural Engine and can take 3–4 minutes. Later loads are almost instant.</span>
           </p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {displayedLocalModels.map((model) => {
-              const filename = model.filename;
-              const isActive = activeModelType === "image" ? activeModel === filename : activeModelType === "text" ? activeLlmModel === filename : activeModelType === "speech" ? activeSpeechModel === filename : activeTtsModel === filename;
-              
-              return (
-                <div 
-                  key={filename} 
-                  style={{ 
-                    display: "flex", 
-                    justifyContent: "space-between", 
-                    alignItems: "center", 
-                    padding: "12px 16px", 
-                    background: isActive ? "var(--md-sys-color-primary-container)" : "var(--md-sys-color-surface-variant)",
-                    color: isActive ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)",
-                    borderRadius: "var(--md-shape-corner-medium)",
-                    border: "1px solid var(--md-sys-color-outline-variant)"
-                  }}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{filename}</span>
-                    <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>
-                      {activeModelType === "image"
-                        ? (model.backendType === "openvino-npu" ? "OpenVINO NPU Model" : model.format || "Local Weights File")
-                        : activeModelType === "text"
-                        ? "llama.cpp GGUF Model"
-                        : activeModelType === "speech"
-                        ? `${model.language || "Whisper"} Model`
-                        : "Kokoro ONNX Model"
-                      } • {model.size || formatBytes(model.sizeBytes)}
-                    </span>
-                  </div>
-                  
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    {isActive ? (
-                      <button className="m3-btn m3-btn-error" style={{ height: "36px", padding: "0 16px" }} onClick={() => handleUnloadModel()} disabled={isUnloading}>
-                        {isUnloading ? <RefreshCw className="progress-spinner" size={14} /> : <Trash2 size={14} />}
-                        <span>{isUnloading ? "Unloading" : "Unload"}</span>
-                      </button>
-                    ) : (
-                      <>
-                        <button 
-                          className="m3-btn m3-btn-filled" 
-                          style={{ height: "36px", padding: "0 16px" }} 
-                          onClick={() => handleLoadModel(filename)}
-                          disabled={isBusy}
-                        >
-                          {loadingModelId === filename ? (
-                            <RefreshCw className="progress-spinner" size={14} />
-                          ) : (
-                            <Database size={14} />
-                          )}
-                          <span>{loadingModelId === filename ? "Loading" : "Load"}</span>
-                        </button>
-                        <button
-                          className="m3-btn m3-btn-error"
-                          style={{ height: "36px", width: "36px", padding: 0, minWidth: "36px" }}
-                          onClick={() => handleDeleteModel(filename)}
-                          disabled={isBusy}
-                          title="Delete from models folder"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+        )}
+        {loadingModelId && (
+          <div className="models-inline-actions">
+            <button type="button" className="btn" onClick={handleCancelLoad}>
+              <Square size={14} aria-hidden="true" />
+              <span>Cancel load</span>
+            </button>
           </div>
         )}
       </div>
+    );
+  };
 
-      <div className="workspace-title-section" style={{ marginTop: "32px", marginBottom: "16px" }}>
-        <h3 className="m3-card-title">
-          <Library size={20} style={{ color: "var(--md-sys-color-primary)" }} />
-          {activeModelType === "text" ? "Hugging Face Model Library" : activeModelType === "speech" ? "Speech Model Library" : activeModelType === "tts" ? "TTS Model Library" : "Model Library"}
-        </h3>
+  const renderDownloadProgress = (name) => (
+    <div className="models-inline-panel">
+      {renderProgress({
+        label: name ? `Downloading ${name}` : "Downloading",
+        value: downloadProgress,
+        valueText: downloadProgress > 0 ? `${downloadProgress}%` : "Preparing",
+        detail: downloadSpeed || null,
+      })}
+      <div className="models-inline-actions">
+        <button type="button" className="btn" onClick={handleCancelDownload}>
+          <Square size={14} aria-hidden="true" />
+          <span>Stop download</span>
+        </button>
       </div>
+    </div>
+  );
 
-      {activeModelType === "text" && (
-        <div className="model-discovery-controls">
-          <div className="model-search-box">
-            <Search size={18} />
-            <input
-              type="search"
-              value={modelSearch}
-              onChange={(event) => setModelSearch(event.target.value)}
-              placeholder="Search Hugging Face GGUF models..."
-              aria-label="Search Hugging Face models"
-            />
-            {modelSearch && (
-              <button type="button" onClick={() => setModelSearch("")} title="Clear search" aria-label="Clear model search">
-                <X size={16} />
+  const localEmptyTitle = query
+    ? `No ${typeNoun} models match "${modelSearch.trim()}"`
+    : `No ${typeNoun} models on this computer yet`;
+  const localEmptyHint = query
+    ? "Try a different name or clear the search."
+    : activeModelType === "tts"
+    ? "Install Kokoro from the library below, or import a .json manifest."
+    : "Download one from the library below, or import a file.";
+
+  // Close the row "..." menu on an outside click or Escape
+  useEffect(() => {
+    if (!rowMenu) return undefined;
+    const onDown = (event) => {
+      if (!event.target.closest?.(".models-row-menu")) setRowMenu(null);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") setRowMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [rowMenu]);
+
+  // The add panel stays open while its download or import is running so progress stays visible
+  const urlDownloadRunning = isUrlDownloading && !libraryDownloadVisible;
+  const addPanelVisible = addOpen || urlDownloadRunning || importProgress !== null;
+
+  // Generic labels ("Weights file", "GGUF") add noise; keep the ones that say something
+  const localDetailLabel = (model) => {
+    if (activeModelType === "speech" || activeModelType === "tts") return null; // their names already say it
+    const label = getLocalFormatLabel(model);
+    return /weights file|^gguf$/i.test(label) ? null : label;
+  };
+
+  return (
+    <div className="page models-page">
+      <div className="page-scroll">
+        <div className="page-column">
+          <header className="page-header models-header">
+            <h1 className="page-title">Models</h1>
+            <div className="models-header-tools">
+              <div className="search-field models-search">
+                <Search size={16} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                  placeholder={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
+                  aria-label={activeModelType === "text" ? "Search models and Hugging Face" : "Search models"}
+                />
+                {modelSearch && (
+                  <button type="button" className="models-search-clear" onClick={() => setModelSearch("")} aria-label="Clear search">
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary models-add-btn"
+                onClick={() => setAddOpen((open) => !open)}
+                aria-expanded={addPanelVisible}
+                aria-controls="models-add-panel"
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>Add model</span>
               </button>
-            )}
-          </div>
-          <div className="model-filter-row" aria-label="Model filters">
-            {MODEL_FILTERS.map((filter) => {
-              const selected = selectedFilters.includes(filter.id);
+            </div>
+          </header>
+
+          <div className="segmented models-tabs" role="tablist" aria-label="Model type">
+            {MODEL_TYPES.map((type, index) => {
+              const selected = activeModelType === type.id;
               return (
                 <button
-                  key={filter.id}
+                  key={type.id}
                   type="button"
-                  className={`model-filter-chip ${selected ? "selected" : ""}`}
-                  onClick={() => toggleModelFilter(filter.id)}
-                  aria-pressed={selected}
+                  role="tab"
+                  className="segmented-item"
+                  aria-selected={selected}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setActiveModelType(type.id)}
+                  onKeyDown={(event) => handleTabKeyDown(event, index)}
                 >
-                  {filter.label}
-                  {selected && <X size={14} />}
+                  {type.label}
                 </button>
               );
             })}
-            {selectedFilters.length > 0 && (
-              <button type="button" className="model-filter-clear" onClick={() => setSelectedFilters([])}>
-                Clear filters
-              </button>
-            )}
           </div>
-          {isSearchingModels && (
-            <div className="model-discovery-loading">
-              <RefreshCw className="progress-spinner" size={16} />
-              <span>Loading models from Hugging Face...</span>
-            </div>
-          )}
-          {modelSearchError && (
-            <div className="model-search-warning">
-              {modelSearchError} Showing the built-in fallback catalog.
-            </div>
-          )}
-        </div>
-      )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {activeModelType === "text" && hasHuggingFaceResults && !isSearchingModels && displayedHuggingFaceModels.length === 0 && (
-          <div className="m3-card model-search-empty">
-            No downloadable single-file GGUF models matched this search and filter combination.
-          </div>
-        )}
-        {visibleModelLibrary.filter((section) => section.items.length > 0).map((section) => (
-          <div key={section.group} className="m3-card" style={{ margin: 0 }}>
-            <h4 style={{ fontWeight: 700, marginBottom: "12px" }}>{section.group}</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px" }}>
-              {section.items.map((model) => {
-                const hasMainModel = modelNames.includes(model.filename);
-                const hasProjector = !model.projectorFilename || allModelNames.includes(model.projectorFilename);
-                const needsProjector = Boolean(hasMainModel && model.projectorFilename && !hasProjector);
-                const installed = hasMainModel && hasProjector;
-                const downloading = downloadingModelId === model.filename || downloadingModelId === model.projectorFilename || downloadingModelId === `${model.filename}.zip`;
-                const systemTier = getHardwareTier(specs);
-                const isRecommended = typeof model.recommendedFit === "boolean"
-                  ? model.recommendedFit
-                  : model.recommendedTiers && model.recommendedTiers.includes(systemTier);
-                const fitLabel = model.fitLabel || "Recommended Fit";
-                return (
-                  <div key={`${model.id || section.group}:${model.filename}`} style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", background: "var(--md-sys-color-surface-variant)", border: "1px solid var(--md-sys-color-outline-variant)", borderRadius: "var(--md-shape-corner-medium)" }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <span style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                        {model.name}
-                        {isRecommended && (
-                          <span title={model.fitReason || `Recommended for ${systemTier} tier hardware`} style={{
-                            fontSize: "0.68rem", 
-                            color: "#2e7d32", 
-                            background: "#e8f5e9", 
-                            padding: "2px 6px", 
-                            borderRadius: "4px", 
-                            fontWeight: "bold",
-                            border: "1px solid #c8e6c9" 
-                          }}>
-                            [{fitLabel}]
-                          </span>
-                        )}
+          {/* Add from URL or file, opened from the header */}
+          {addPanelVisible && (
+            <section id="models-add-panel" className="models-add-panel" aria-label="Add a model">
+              <div className="models-add-head">
+                <h2 className="models-add-title">Add {/^[aeiou]/.test(typeNoun) ? "an" : "a"} {typeNoun} model</h2>
+                {!urlDownloadRunning && importProgress === null && (
+                  <button type="button" className="icon-btn" onClick={() => setAddOpen(false)} aria-label="Close">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <div className="models-add-methods" role="radiogroup" aria-label="How to add the model">
+                {ADD_METHODS.map((method) => {
+                  const MethodIcon = method.Icon;
+                  const selected = currentAddMethod === method.id;
+                  return (
+                    <button
+                      key={method.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className="models-add-method"
+                      onClick={() => {
+                        setAddMethod(method.id);
+                        setLinkError("");
+                      }}
+                    >
+                      <MethodIcon size={18} className="models-add-method-icon" aria-hidden="true" />
+                      <span className="models-add-method-text">
+                        <span className="models-add-method-label">{method.label}</span>
+                        <span className="models-add-method-desc">{method.desc}</span>
                       </span>
-                      <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)" }}>
-                        {model.format} {model.resolution && model.resolution !== "N/A" && `• ${model.resolution}`}
-                      </span>
-                      {model.size && model.size !== "Unknown" ? (
-                        <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-on-surface-variant)", fontWeight: 600 }}>
-                          File size: {model.size}
-                        </span>
-                      ) : model.approxSize ? (
-                        <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-on-surface-variant)", fontWeight: 600 }}>
-                          File size: approx. {model.approxSize}
-                        </span>
-                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {currentAddMethod === "link" && (
+                <>
+                  <form className="models-url-form" onSubmit={handleUrlDownloadSubmit}>
+                    <div className="search-field models-url-field">
+                      <Link size={16} aria-hidden="true" />
+                      <input
+                        type="url"
+                        inputMode="url"
+                        placeholder="Paste a Hugging Face file URL"
+                        aria-label="Model file URL"
+                        value={downloadUrl}
+                        onChange={(e) => setDownloadUrl(e.target.value)}
+                        disabled={isUrlDownloading}
+                      />
                     </div>
-                    <p style={{ fontSize: "0.78rem", color: "var(--md-sys-color-on-surface-variant)", lineHeight: 1.35, margin: 0 }}>
-                      {model.notes}
+                    <button type="submit" className="btn" disabled={isUrlDownloading || !downloadUrl.trim()}>
+                      <DownloadCloud size={14} aria-hidden="true" />
+                      <span>Download</span>
+                    </button>
+                  </form>
+                  <p className="field-hint models-add-hint">Works with {fileTypesLabel} files. It is saved to the app's models folder.</p>
+                </>
+              )}
+
+              {currentAddMethod === "inplace" && (
+                <>
+                  <form className="models-url-form" onSubmit={handleLinkSubmit}>
+                    <div className="search-field models-url-field">
+                      <HardDrive size={16} aria-hidden="true" />
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder={isMacClient ? "/Users/you/Models/model.safetensors" : "D:\\Models\\model.safetensors"}
+                        aria-label="Path to the model file"
+                        value={linkPath}
+                        onChange={(e) => {
+                          setLinkPath(e.target.value);
+                          setLinkError("");
+                        }}
+                        disabled={isLinking}
+                      />
+                    </div>
+                    <button type="button" className="btn" onClick={handleBrowseForFile} disabled={isPicking || isLinking}>
+                      {isPicking ? <Loader2 size={14} className="models-spin" aria-hidden="true" /> : <FolderOpen size={14} aria-hidden="true" />}
+                      <span>{isPicking ? "Choosing…" : "Browse…"}</span>
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={isLinking || !linkPath.trim()}>
+                      {isLinking ? <Loader2 size={14} className="models-spin" aria-hidden="true" /> : <Link2 size={14} aria-hidden="true" />}
+                      <span>Use file</span>
+                    </button>
+                  </form>
+                  {linkError ? (
+                    <p className="models-warning models-add-hint" role="alert">{linkError}</p>
+                  ) : (
+                    <p className="field-hint models-add-hint">
+                      {isPicking
+                        ? "Choose the file in the window that opened. It may be behind this one."
+                        : isMacClient
+                        ? "It stays where it is, so don't move or delete it. Tip: in Finder, Option-Command-C copies a file's path."
+                        : "It stays where it is, so don't move or delete it. Tip: Shift-right-click a file and choose Copy as path."}
                     </p>
-                    {downloading && (
-                      <div className="model-progress-section" style={{ marginTop: "2px" }}>
-                        <div className="model-progress-label">
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                            <span className="loading-dot"></span>
-                            Downloading
-                          </span>
-                          <span>{downloadProgress > 0 ? `${downloadProgress}%` : "Preparing"}</span>
+                  )}
+                </>
+              )}
+
+              {currentAddMethod === "import" && (
+                <>
+                  <div className="models-add-row models-import-row">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="models-file-input"
+                      accept={importAccept}
+                      onChange={handleImportFile}
+                      disabled={importProgress !== null}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={importProgress !== null}
+                    >
+                      <FolderOpen size={14} aria-hidden="true" />
+                      <span>Choose file…</span>
+                    </button>
+                    <span className="models-import-note">
+                      A {fileTypesLabel} file is copied into the app, so it keeps working if the original moves. The copy uses disk space.
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {urlDownloadRunning && renderDownloadProgress(downloadingModelId)}
+
+              {importProgress !== null && (
+                <div className="models-inline-panel">
+                  {renderProgress({
+                    label: `Copying ${importInfo.filename}${importInfo.status ? ` · ${importInfo.status}` : ""}`,
+                    value: importProgress,
+                    valueText: `${importProgress}%`,
+                    detail: `${importInfo.speed} MB/s · ${importInfo.eta}s left`,
+                  })}
+                  <div className="models-inline-actions">
+                    <button type="button" className="btn" onClick={handleCancelImport}>
+                      <Square size={14} aria-hidden="true" />
+                      <span>Stop import</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* On this computer */}
+          <h2 className="page-section-label models-section-label">
+            <span>On this computer</span>
+            {!isLoadingModels && <span className="models-count">{filteredLocalModels.length}</span>}
+          </h2>
+
+          {modelLoadProgress && !loadRowVisible && (
+            <div className="row-list models-standalone">
+              <div className="row-item models-stack-item">
+                <div className="row-item-main">
+                  <div className="row-item-title">{describeModelFile(modelLoadProgress.model).title}</div>
+                  {renderLoadProgress()}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isLoadingModels ? (
+            <div className="models-scanning" role="status">
+              <Loader2 size={16} className="models-spin" aria-hidden="true" />
+              <span>Looking for models…</span>
+            </div>
+          ) : filteredLocalModels.length === 0 ? (
+            <div className="row-list">
+              <div className="empty-state">
+                <div className="empty-state-title">{localEmptyTitle}</div>
+                <div>{localEmptyHint}</div>
+              </div>
+            </div>
+          ) : (
+            <ul className="row-list">
+              {filteredLocalModels.map((model) => {
+                const filename = model.filename;
+                const isActive = isModelActive(filename);
+                const isLoadingThis = loadingModelId === filename;
+                // Some runtimes put a note in "size"; only show it when it is an actual size
+                const rawSize = model.size || formatBytes(model.sizeBytes);
+                const sizeLabel = /^\s*~?\d/.test(String(rawSize || "")) ? rawSize : null;
+                const info = describeModelFile(filename, model.name);
+                const meta = [
+                  model.missing ? "File not found" : sizeLabel,
+                  ...info.details,
+                  model.linkedFrom ? `Linked from ${shortPath(model.linkedFrom)}` : null,
+                  localDetailLabel(model),
+                  isActive && activeBackendLabel ? `Running on ${activeBackendLabel}` : null,
+                ].filter(Boolean).join(" · ");
+                const menuOpen = rowMenu === filename;
+                // A file whose header says it belongs under another type (a text GGUF on the Image tab)
+                const belongsIn = ["image", "text", "speech"].includes(model.detectedKind) && model.detectedKind !== activeModelType
+                  ? model.detectedKind
+                  : null;
+                return (
+                  <li
+                    key={filename}
+                    className={`row-item models-stack-item models-local-row ${isActive ? "is-loaded" : ""} ${isLoadingThis || menuOpen ? "is-engaged" : ""}`}
+                  >
+                    <div className="models-row-top">
+                      <div className="row-item-main" title={model.linkedFrom || filename}>
+                        <div className="models-title-line">
+                          <span className="row-item-title">{info.title}</span>
+                          {isActive && <span className="models-loaded-tag">Loaded</span>}
                         </div>
-                        <div className="model-progress-bar">
-                          <div className="model-progress-fill" style={{ width: `${Math.min(100, Math.max(0, downloadProgress))}%`, transition: "width 0.2s ease" }}></div>
-                        </div>
-                        {downloadSpeed && (
-                          <div style={{ fontSize: "0.7rem", color: "var(--md-sys-color-outline)", marginTop: "4px" }}>
-                            {downloadSpeed}
+                        {meta && <div className="row-item-meta models-meta">{meta}</div>}
+                        {belongsIn && (
+                          <div className="models-misplaced" role="note">
+                            <AlertTriangle size={13} aria-hidden="true" />
+                            <span>This is {/^[aeiou]/i.test(belongsIn) ? "an" : "a"} {belongsIn} model, so it won't work here.</span>
+                            <button
+                              type="button"
+                              className="models-link-btn models-misplaced-btn"
+                              onClick={() => handleMoveModel(filename, belongsIn)}
+                              disabled={movingModel === filename || isActive}
+                            >
+                              {movingModel === filename && <Loader2 size={13} className="models-spin" aria-hidden="true" />}
+                              <span>Move to {kindLabel(belongsIn)} models</span>
+                            </button>
                           </div>
                         )}
                       </div>
+                      <div className="row-item-actions models-row-actions">
+                        {isActive ? (
+                          <button type="button" className="btn" onClick={() => handleUnloadModel()} disabled={isUnloading}>
+                            {isUnloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                            <span>{isUnloading ? "Unloading" : "Unload"}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => handleLoadModel(filename)}
+                            disabled={isBusy}
+                            aria-label={`Load ${info.title}`}
+                          >
+                            {isLoadingThis && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                            <span>{isLoadingThis ? "Loading" : "Load"}</span>
+                          </button>
+                        )}
+                        <div className="models-row-menu">
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => setRowMenu(menuOpen ? null : filename)}
+                            aria-label={`More actions for ${info.title}`}
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                          >
+                            <MoreHorizontal size={17} aria-hidden="true" />
+                          </button>
+                          {menuOpen && (
+                            <div className="popover models-row-popover" role="menu">
+                              <div className="models-row-popover-file" title={model.linkedFrom || filename}>{model.linkedFrom || filename}</div>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="models-row-popover-item danger"
+                                onClick={() => {
+                                  setRowMenu(null);
+                                  handleDeleteModel(filename);
+                                }}
+                                disabled={isBusy || isActive}
+                                title={isActive ? "Unload it first" : undefined}
+                              >
+                                <Trash2 size={15} aria-hidden="true" />
+                                <span>{model.linkedFrom ? "Remove from app (keeps the file)" : "Delete from this computer"}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {loadRowId === filename && renderLoadProgress()}
+                    {isActive && isUnloading && activeModelType === "image" && (
+                      <div className="models-inline-panel">
+                        {renderProgress({
+                          label: unloadProgress.phase || "Unloading model…",
+                          value: unloadProgress.progress,
+                          danger: true,
+                        })}
+                      </div>
                     )}
-                    <button
-                      className={installed ? "m3-btn m3-btn-tonal" : "m3-btn m3-btn-filled"}
-                      style={{ height: "36px", marginTop: "auto" }}
-                      onClick={() => handleLibraryDownload(model)}
-                      disabled={installed || downloadingModelId !== null}
-                    >
-                      {installed ? <HardDrive size={14} /> : downloading ? <RefreshCw className="progress-spinner" size={14} /> : <DownloadCloud size={14} />}
-                      <span>{installed ? "Downloaded" : downloading ? "Downloading" : needsProjector ? "Download Vision File" : "Download"}</span>
-                    </button>
-                    <a
-                      href={model.pageUrl || model.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        alignSelf: "center",
-                        color: "var(--md-sys-color-primary)",
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        lineHeight: 1.2,
-                        textDecoration: "none",
-                      }}
-                    >
-                      {model.pageUrl ? "View on Hugging Face" : "Save to Downloads folder"}
-                    </a>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
-          </div>
-        ))}
-        {activeModelType === "text" && hasHuggingFaceResults && hasMoreModels && !isSearchingModels && (
-          <button
-            type="button"
-            className="m3-btn m3-btn-tonal model-load-more"
-            onClick={handleLoadMoreModels}
-            disabled={isLoadingMoreModels}
-          >
-            {isLoadingMoreModels && <RefreshCw className="progress-spinner" size={16} />}
-            <span>{isLoadingMoreModels ? "Loading more models..." : "Load More"}</span>
-          </button>
-        )}
-      </div>
+            </ul>
+          )}
 
-      {/* Local Drag and Drop Importer */}
-      <div className="workspace-title-section" style={{ marginTop: "32px", marginBottom: "16px" }}>
-        <h3 className="m3-card-title">
-          <FolderOpen size={20} style={{ color: "var(--md-sys-color-primary)" }} />
-          Local Model Import
-        </h3>
-      </div>
-      {/* Importing Progress Bar */}
-      {importProgress !== null && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", marginTop: "24px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
-            <h4 style={{ fontWeight: 600 }}>Copying Model to local folder: {importInfo.filename}</h4>
-            <button className="m3-btn m3-btn-error" style={{ height: "34px", padding: "0 14px" }} onClick={handleCancelImport}>
-              <Square size={14} />
-              <span>Stop Import</span>
-            </button>
-          </div>
-          <div className="model-progress-section" style={{ margin: "12px 0 6px 0" }}>
-            <div className="model-progress-label">
-              <span>{importInfo.status} ({importInfo.speed} MB/s)</span>
-              <span>{importProgress}% ({importInfo.eta}s remaining)</span>
-            </div>
-            <div className="model-progress-bar">
-              <div className="model-progress-fill" style={{ width: `${importProgress}%`, transition: "width 0.15s ease" }}></div>
-            </div>
-          </div>
-        </div>
-      )}
+          {/* Library */}
+          <h2 className="page-section-label">Library</h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px", marginTop: "16px" }}>
-        <label className="import-box" style={{ margin: 0, height: "100%", justifyContent: "center" }}>
-          <input
-            type="file"
-            style={{ display: "none" }}
-            accept={activeModelType === "image" ? ".safetensors,.ckpt" : activeModelType === "text" ? ".gguf" : activeModelType === "speech" ? ".bin" : ".json"}
-            onChange={handleImportFile}
-            disabled={importProgress !== null}
-          />
-          <FolderOpen className="import-icon" />
-          <span style={{ fontWeight: 600 }}>Choose weights file</span>
-          <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", textAlign: "center" }}>
-            Select {activeModelType === "image" ? "`.safetensors` or `.ckpt` weights." : activeModelType === "text" ? "`.gguf` weights." : activeModelType === "speech" ? "`whisper.cpp .bin` weights." : "`Kokoro .json` manifest."}
-          </span>
-        </label>
-
-        <div className="m3-card" style={{ display: "flex", flexDirection: "column", justifyContent: "center", margin: 0, padding: "20px" }}>
-          <h4 style={{ fontWeight: 600, marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
-            <DownloadCloud size={16} />
-            Download Model from URL
-          </h4>
-          <p style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginBottom: "12px" }}>
-            Download any {activeModelType === "image" ? "Safetensors" : activeModelType === "text" ? "GGUF" : activeModelType === "speech" ? "Whisper .bin" : "Kokoro manifest"} model from Hugging Face directly to your models folder.
-          </p>
-          {isUrlDownloading ? (
-            <div className="model-progress-section" style={{ marginTop: "0px" }}>
-              <div className="model-progress-label">
-                <span style={{ fontSize: "0.75rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "200px" }} title={downloadingModelId}>
-                  {downloadingModelId}
-                </span>
-                <span>{downloadProgress}%</span>
+          {activeModelType === "text" && (
+            <div className="models-library-tools">
+              <div className="models-filter-row" role="group" aria-label="Hugging Face filters">
+                {MODEL_FILTERS.map((filter) => {
+                  const selected = selectedFilters.includes(filter.id);
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      className="models-filter-chip"
+                      onClick={() => toggleModelFilter(filter.id)}
+                      aria-pressed={selected}
+                    >
+                      {filter.label}
+                      {selected && <X size={12} aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+                {selectedFilters.length > 0 && (
+                  <button type="button" className="models-link-btn" onClick={() => setSelectedFilters([])}>
+                    Clear filters
+                  </button>
+                )}
               </div>
-              <div className="model-progress-bar" style={{ margin: "4px 0" }}>
-                <div className="model-progress-fill" style={{ width: `${downloadProgress}%`, transition: "width 0.15s ease" }}></div>
-              </div>
-              <div style={{ fontSize: "0.7rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
-                {downloadSpeed}
-              </div>
-              <button className="m3-btn m3-btn-error" style={{ height: "34px", padding: "0 14px", marginTop: "10px" }} onClick={handleCancelDownload}>
-                <Square size={14} />
-                <span>Stop Download</span>
-              </button>
+              {isSearchingModels && (
+                <div className="models-scanning models-scanning-inline" role="status">
+                  <Loader2 size={14} className="models-spin" aria-hidden="true" />
+                  <span>Searching Hugging Face…</span>
+                </div>
+              )}
+              {modelSearchError && (
+                <p className="models-warning" role="status">
+                  {modelSearchError} Showing the built-in list instead.
+                </p>
+              )}
             </div>
-          ) : (
-            <form onSubmit={handleUrlDownloadSubmit} style={{ display: "flex", gap: "8px" }}>
-              <input
-                type="text"
-                className="m3-input"
-                style={{ flex: 1, height: "40px" }}
-                placeholder="e.g. https://huggingface.co/..."
-                value={downloadUrl}
-                onChange={(e) => setDownloadUrl(e.target.value)}
-                disabled={downloadingModelId !== null}
-              />
-              <button 
-                type="submit" 
-                className="m3-btn m3-btn-filled" 
-                style={{ height: "40px" }}
-                disabled={downloadingModelId !== null}
+          )}
+
+          {filteredLibrary.length === 0 && !(activeModelType === "text" && isSearchingModels) && (
+            <div className="row-list">
+              <div className="empty-state">
+                <div className="empty-state-title">
+                  {activeModelType === "text" && hasHuggingFaceResults
+                    ? "No single-file GGUF models match"
+                    : query ? `Nothing in the library matches "${modelSearch.trim()}"` : "The library is empty for this type"}
+                </div>
+                <div>
+                  {activeModelType === "text" && hasHuggingFaceResults
+                    ? "Try another search or remove a filter."
+                    : "Try a different name, or add one with a download link."}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {filteredLibrary.map((section) => (
+            <section key={section.group} className="models-group" aria-label={section.group}>
+              <h3 className="models-group-label">{section.group}</h3>
+              <ul className="models-library-grid">
+                {section.items.map((model) => {
+                  const hasMainModel = modelNames.includes(model.filename);
+                  const hasProjector = !model.projectorFilename || allModelNames.includes(model.projectorFilename);
+                  const needsProjector = Boolean(hasMainModel && model.projectorFilename && !hasProjector);
+                  const installed = hasMainModel && hasProjector;
+                  const downloading = isLibraryItemDownloading(model);
+                  const isRecommended = typeof model.recommendedFit === "boolean"
+                    ? model.recommendedFit
+                    : model.recommendedTiers && model.recommendedTiers.includes(systemTier);
+                  const fitLabel = model.fitLabel || defaultFitLabel;
+                  const sizeLabel = model.size && model.size !== "Unknown"
+                    ? model.size
+                    : model.approxSize
+                    ? (/^\d/.test(model.approxSize) ? `~${model.approxSize}` : model.approxSize)
+                    : null;
+                  const meta = [
+                    sizeLabel,
+                    model.resolution && model.resolution !== "N/A" ? model.resolution : null,
+                    model.format && !/^(safetensors|gguf)$/i.test(model.format) ? model.format : null,
+                  ].filter(Boolean).join(" · ");
+                  const pageLink = model.pageUrl || model.url;
+                  return (
+                    <li
+                      key={`${model.id || section.group}:${model.filename}`}
+                      className={`models-card ${downloading ? "is-downloading" : ""}`}
+                    >
+                      <div className="models-card-title">
+                        <span>{model.name}</span>
+                        {isRecommended && (
+                          <span
+                            className="models-fit-dot"
+                            role="img"
+                            aria-label={fitLabel}
+                            title={model.fitReason ? `${fitLabel}: ${model.fitReason}` : fitLabel}
+                          />
+                        )}
+                      </div>
+                      {model.notes && <p className="models-card-desc">{model.notes}</p>}
+                      <div className="models-card-foot">
+                        <span className="models-card-meta">{meta}</span>
+                        <div className="models-card-actions">
+                          {pageLink && (
+                            <a
+                              className="icon-btn"
+                              href={pageLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={model.pageUrl ? `View ${model.name} on Hugging Face` : `Open the download link for ${model.name}`}
+                              title={model.pageUrl ? "View on Hugging Face" : "Open download link"}
+                            >
+                              <ExternalLink size={15} aria-hidden="true" />
+                            </a>
+                          )}
+                          {installed ? (
+                            <span className="models-card-done">
+                              <Check size={14} aria-hidden="true" />
+                              <span>Downloaded</span>
+                            </span>
+                          ) : needsProjector ? (
+                            <button
+                              type="button"
+                              className="btn models-card-btn"
+                              onClick={() => handleLibraryDownload(model)}
+                              disabled={downloadingModelId !== null}
+                            >
+                              {downloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                              <span>Get vision file</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="icon-btn models-card-download"
+                              onClick={() => handleLibraryDownload(model)}
+                              disabled={downloadingModelId !== null}
+                              aria-label={downloading ? `Downloading ${model.name}` : `Download ${model.name}`}
+                              title={downloading ? "Downloading" : "Download"}
+                            >
+                              {downloading
+                                ? <Loader2 size={15} className="models-spin" aria-hidden="true" />
+                                : <DownloadCloud size={15} aria-hidden="true" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {downloading && renderDownloadProgress(null)}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+
+          {activeModelType === "text" && hasHuggingFaceResults && hasMoreModels && !isSearchingModels && (
+            <div className="models-load-more">
+              <button
+                type="button"
+                className="btn"
+                onClick={handleLoadMoreModels}
+                disabled={isLoadingMoreModels}
               >
-                Download
+                {isLoadingMoreModels && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                <span>{isLoadingMoreModels ? "Loading more…" : "Load more"}</span>
               </button>
-            </form>
+            </div>
           )}
         </div>
       </div>
 
       {pendingLoadModel && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-          <div className="m3-card" style={{ maxWidth: "460px", width: "100%", margin: 0, border: "1px solid var(--md-sys-color-outline-variant)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
-              <AlertTriangle size={22} style={{ color: "var(--md-sys-color-error)" }} />
-              <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>Model Already Active</h3>
-            </div>
-            <p style={{ fontSize: "0.9rem", color: "var(--md-sys-color-on-surface-variant)", lineHeight: 1.45, marginBottom: "16px" }}>
-              "{pendingLoadModel.activeRuntime?.model}" is already loaded as a {pendingLoadModel.activeRuntime?.label || "model"} model. Unload it before loading "{pendingLoadModel.modelId}" as a {getModelTypeLabel(pendingLoadModel.targetType)} model.
+        <div className="models-dialog-backdrop">
+          <div className="models-dialog" role="dialog" aria-modal="true" aria-labelledby="models-pending-title">
+            <h3 id="models-pending-title" className="models-dialog-title">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <span>Another model is loaded</span>
+            </h3>
+            <p className="models-dialog-body">
+              "{pendingLoadModel.activeRuntime?.model}" is loaded as the {(pendingLoadModel.activeRuntime?.label || "active").toLowerCase()} model. Unload it before loading "{pendingLoadModel.modelId}" as the {getModelTypeLabel(pendingLoadModel.targetType).toLowerCase()} model.
             </p>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button className="m3-btn m3-btn-outlined" onClick={() => setPendingLoadModel(null)} disabled={isUnloading}>
+            <div className="models-dialog-actions">
+              <button type="button" className="btn" onClick={() => setPendingLoadModel(null)} disabled={isUnloading}>
                 Cancel
               </button>
-              <button className="m3-btn m3-btn-error" onClick={handleUnloadPendingOnly} disabled={isUnloading}>
-                <Trash2 size={14} />
-                <span>Unload</span>
+              <button type="button" className="btn btn-danger" onClick={handleUnloadPendingOnly} disabled={isUnloading}>
+                Unload only
               </button>
-              <button className="m3-btn m3-btn-filled" onClick={handleUnloadThenLoad} disabled={isUnloading}>
-                {isUnloading ? <RefreshCw className="progress-spinner" size={14} /> : <RefreshCw size={14} />}
-                <span>Unload and Load</span>
+              <button type="button" className="btn btn-primary" onClick={handleUnloadThenLoad} disabled={isUnloading}>
+                {isUnloading && <Loader2 size={14} className="models-spin" aria-hidden="true" />}
+                <span>Unload and load</span>
               </button>
             </div>
           </div>
@@ -1932,27 +2225,36 @@ function ModelManager({
       )}
 
       {vramWarning && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-          <div className="m3-card" style={{ maxWidth: "480px", width: "100%", margin: 0, padding: "24px", border: "1px solid var(--md-sys-color-error)", boxShadow: "0 8px 32px rgba(0, 0, 0, 0.45)", background: "var(--md-sys-color-surface)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
-              <AlertTriangle size={28} style={{ color: "var(--md-sys-color-error)" }} />
-              <h3 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0, color: "var(--md-sys-color-on-surface)" }}>VRAM Limit Exceeded</h3>
-            </div>
-            <p style={{ fontSize: "0.92rem", color: "var(--md-sys-color-on-surface-variant)", lineHeight: 1.5, marginBottom: "20px", margin: 0 }}>
-              The model <strong style={{ color: "var(--md-sys-color-on-surface)" }}>{vramWarning.modelId}</strong> is approximately <strong>{vramWarning.modelSizeGb.toFixed(1)} GB</strong>, which exceeds your currently available GPU VRAM of <strong>{vramWarning.freeVramGb.toFixed(1)} GB free</strong> (out of {vramWarning.totalVramGb.toFixed(1)} GB total).
-              <br /><br />
-              Loading this model on your GPU may fail, crash the backend, or cause extremely slow generation due to memory spilling.
+        <div className="models-dialog-backdrop">
+          <div className="models-dialog" role="dialog" aria-modal="true" aria-labelledby="models-vram-title">
+            <h3 id="models-vram-title" className="models-dialog-title">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <span>Not enough GPU memory</span>
+            </h3>
+            <p className="models-dialog-body">
+              <strong>{vramWarning.modelId}</strong> needs about <strong>{vramWarning.modelSizeGb.toFixed(1)} GB</strong>, but only <strong>{vramWarning.freeVramGb.toFixed(1)} GB</strong> of GPU memory is free ({vramWarning.totalVramGb.toFixed(1)} GB total).
             </p>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", flexWrap: "wrap" }}>
-              <button 
-                className="m3-btn m3-btn-outlined" 
-                onClick={() => setVramWarning(null)}
-              >
+            <p className="models-dialog-body">
+              Loading it on the GPU may fail, stop the backend, or make generation very slow. Load it on the CPU instead, or close other GPU apps first.
+            </p>
+            <div className="models-dialog-actions">
+              <button type="button" className="btn" onClick={() => setVramWarning(null)}>
                 Cancel
               </button>
-              <button 
-                className="m3-btn m3-btn-tonal"
-                style={{ borderColor: "var(--md-sys-color-primary)", color: "var(--md-sys-color-primary)" }}
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={async () => {
+                  const targetModel = vramWarning.modelId;
+                  setVramWarning(null);
+                  await performLoadModel(targetModel);
+                }}
+              >
+                Use GPU anyway
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
                 onClick={async () => {
                   const targetModel = vramWarning.modelId;
                   setVramWarning(null);
@@ -1972,16 +2274,6 @@ function ModelManager({
                 }}
               >
                 Load on CPU
-              </button>
-              <button 
-                className="m3-btn m3-btn-error" 
-                onClick={async () => {
-                  const targetModel = vramWarning.modelId;
-                  setVramWarning(null);
-                  await performLoadModel(targetModel);
-                }}
-              >
-                Proceed anyway (GPU)
               </button>
             </div>
           </div>

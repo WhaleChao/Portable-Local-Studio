@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown, Globe2, Plus } from "lucide-react";
+import { LoaderCircle, Trash2, Square, X, ChevronDown, Globe2, Plus, PenLine, Lightbulb, Zap, FileText, ArrowUp, Brain, Mic, AudioLines, Image as ImageIcon, PanelLeft } from "lucide-react";
 import {
   getDownloadProgress,
   getLlmStatus,
@@ -121,10 +121,12 @@ function TextChat({
   setConversations,
   activeConversationId,
   setActiveConversationId,
-  showHistory,
-  setShowHistory,
   saveConversationState,
-  setIsLlmLoaded
+  setIsLlmLoaded,
+  setActiveTab,
+  onThreadChange,
+  sidebarVisible = true,
+  onToggleSidebar
 }) {
   const formatGenerationTime = (seconds) => {
     const value = Number(seconds) || 0;
@@ -210,7 +212,7 @@ function TextChat({
   const resizeComposerInput = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    const maxHeight = 104;
+    const maxHeight = 200;
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
@@ -473,29 +475,39 @@ function TextChat({
   };
 
   useEffect(() => {
-    const container = chatMessagesRef.current;
-    if (!container) return;
-
+    // Track the length even while the thread is unmounted (home screen), so the
+    // first message of a new or cleared chat is detected correctly
     const len = messages.length;
     const prevLen = prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = len;
 
+    const container = chatMessagesRef.current;
+    if (!container) return;
+
     const lastMessage = messages[len - 1];
     const isNewUserMessage = len > prevLen && lastMessage?.role === "user";
+    const isOpeningConversation = prevLen === 0 && len > 0;
 
     // Scroll only the message list. scrollIntoView() also scrolls every scrollable
     // ancestor, which pushed the header and composer off screen while streaming.
-    const scrollToBottom = () => container.scrollTo({ top: container.scrollHeight });
-    if (isNewUserMessage || followGenerationRef.current) {
-      scrollToBottom();
-    } else {
-      const threshold = 150;
-      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
-      if (isNearBottom) {
-        scrollToBottom();
-      }
+    // Follow new text only while the reader is at the bottom (see handleMessagesScroll),
+    // so scrolling up during generation is never pulled back down.
+    if (isNewUserMessage || isOpeningConversation) followGenerationRef.current = true;
+    if (followGenerationRef.current) {
+      container.scrollTo({ top: container.scrollHeight });
     }
   }, [messages, isBusy, loadingModel]);
+
+  // Lets the app hide its top bar while a conversation is on screen
+  useEffect(() => {
+    onThreadChange?.(messages.length > 0 && !loadingModel);
+  }, [messages.length, loadingModel, onThreadChange]);
+
+  const handleMessagesScroll = (event) => {
+    const container = event.currentTarget;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    followGenerationRef.current = distanceFromBottom <= 24;
+  };
 
   const handleModelChange = async (filename) => {
     if (!filename) {
@@ -645,7 +657,8 @@ function TextChat({
     setIsBusy(true);
 
     const displayTitleText = text || (imageAttachments.length > 0 ? "Sent Image" : "Sent File");
-    const firstTitle = isNew ? (displayTitleText.slice(0, 26) + (displayTitleText.length > 26 ? "..." : "")) : null;
+    // Keep the full first line; the sidebar truncates visually
+    const firstTitle = isNew ? displayTitleText.split("\n")[0].slice(0, 80) : null;
     saveConversationState(convId, nextMessages, selectedModel, firstTitle);
 
     const requestStartedAt = performance.now();
@@ -868,437 +881,362 @@ function TextChat({
     }
   };
 
-  return (
-    <div className="text-chat-layout" style={{ display: "flex", height: "100%", width: "100%", boxSizing: "border-box", overflow: "hidden" }}>
-      <section className="text-chat-main" style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column" }}>
-        {/* ─── Header ─────────────────────────────────────────── */}
-        <div className="text-chat-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flex: 1 }}>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="m3-btn m3-btn-tonal"
-              style={{
-                height: "34px", width: "34px", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: "var(--md-shape-corner-medium)", cursor: "pointer",
-                background: showHistory ? "var(--md-sys-color-primary-container)" : "var(--md-sys-color-surface-variant)",
-                color: showHistory ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface)",
-                border: "1px solid var(--border-color)", flexShrink: 0
-              }}
-              title="Toggle Chat History"
-            >
-              <History size={17} />
-            </button>
+  const hasMessages = messages.length > 0;
+  const needsLoad = Boolean(selectedModel) && (!status.ready || status.settings?.model !== selectedModel) && !loadingModel;
+  const modelLabel = selectedModel ? selectedModel.replace(/\.gguf$/i, "") : "Choose a model";
+  const contextMax = status.settings?.contextSize || 4096;
+  const contextUsed = tokenUsage.total_tokens || 0;
+  const contextPercent = Math.min(100, Math.round((contextUsed / contextMax) * 100));
+  const composerPlaceholder = status.ready
+    ? "Ask anything"
+    : selectedModel
+      ? "Load the model to start chatting"
+      : "Choose a model to start chatting";
 
-            <button
-              onClick={handleNewChat}
-              className="m3-btn m3-btn-tonal"
-              style={{
-                height: "34px", width: "34px", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: "var(--md-shape-corner-medium)", cursor: "pointer",
-                background: "var(--md-sys-color-surface-variant)",
-                color: "var(--md-sys-color-on-surface)",
-                border: "1px solid var(--border-color)", flexShrink: 0
-              }}
-              title="Start New Chat"
-              disabled={isBusy}
-            >
-              <Plus size={17} />
-            </button>
+  const homeSuggestions = [
+    ...(status.ready ? [
+      { Icon: PenLine, label: "Write a professional email to reschedule a meeting", onClick: () => setInput("Write a professional email to reschedule a meeting") },
+      { Icon: Lightbulb, label: "Explain how transformers work in simple terms", onClick: () => setInput("Explain how transformers work in simple terms") },
+    ] : []),
+    { Icon: ImageIcon, label: "Create an image", onClick: () => setActiveTab?.("generator") },
+    { Icon: Mic, label: "Transcribe a recording", onClick: () => setActiveTab?.("speech") },
+    { Icon: AudioLines, label: "Turn text into speech", onClick: () => setActiveTab?.("tts") },
+  ];
 
-            <div ref={modelMenuRef} style={{ position: "relative", display: "inline-block", flex: "0 1 280px", maxWidth: "280px", width: "100%" }}>
+  const composer = (
+    <div className="chat-composer">
+      {attachments.length > 0 && (
+        <div className="chat-attachments">
+          {attachments.map((att) => (
+            <div key={att.id} className="chat-attachment">
+              {att.type === "image" ? (
+                <img src={att.dataUrl} alt="" className="chat-attachment-thumb" />
+              ) : (
+                <FileText size={16} aria-hidden="true" style={{ flexShrink: 0 }} />
+              )}
+              <span className="chat-attachment-name" title={att.name}>{att.name}</span>
               <button
-                onClick={() => !isBusy && setShowModelMenu(!showModelMenu)}
-                className={`chat-model-select-trigger ${showModelMenu ? "active" : ""}`}
-                disabled={isBusy}
-                title="Select GGUF Model"
+                type="button"
+                className="chat-attachment-remove"
+                onClick={() => setAttachments(prev => prev.filter(item => item.id !== att.id))}
+                aria-label={`Remove ${att.name}`}
               >
-                <span className="chat-model-select-label">
-                  {selectedModel ? selectedModel : "No model loaded (Select GGUF)"}
-                </span>
-                <ChevronDown size={14} className={`chat-model-select-arrow ${showModelMenu ? "open" : ""}`} />
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="chat-composer-inner">
+        <textarea
+          ref={textareaRef}
+          className="chat-composer-textarea"
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              sendMessage();
+            }
+          }}
+          placeholder={composerPlaceholder}
+          aria-label="Message"
+          disabled={!status.ready || isBusy}
+          rows={1}
+        />
+
+        <div className="chat-composer-toolbar">
+          <div className="chat-composer-toolbar-left">
+            <input type="file" ref={fileInputRef} style={{ display: "none" }} multiple onChange={handleFileChange} />
+            <button
+              type="button"
+              className="chat-composer-icon-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!status.ready || isBusy}
+              aria-label="Attach files"
+              title={status.ready ? "Attach files (text/code) or images (vision models only)" : "Load a model to attach files"}
+            >
+              <Plus size={20} />
+            </button>
+            <button
+              type="button"
+              className={`chat-composer-chip ${useWebSearch ? "active" : ""}`}
+              onClick={() => setUseWebSearch((value) => !value)}
+              disabled={!status.ready || isBusy}
+              aria-pressed={useWebSearch}
+              title={useWebSearch ? "Disable web search" : "Enable web search"}
+            >
+              <Globe2 size={15} />
+              <span>Web</span>
+            </button>
+            {status.ready && supportsThinking && (
+              <button
+                type="button"
+                className={`chat-composer-chip ${deepThinkEnabled ? "active" : ""}`}
+                onClick={handleThinkingToggle}
+                aria-pressed={deepThinkEnabled}
+                title={deepThinkEnabled ? "Disable DeepThink reasoning" : "Enable DeepThink reasoning"}
+              >
+                <Brain size={15} />
+                <span>Think</span>
+              </button>
+            )}
+          </div>
+
+          <div className="chat-composer-toolbar-right">
+            <div ref={modelMenuRef} className="chat-model-picker">
+              <button
+                type="button"
+                onClick={() => !isBusy && setShowModelMenu(!showModelMenu)}
+                className={`chat-model-trigger ${showModelMenu ? "active" : ""}`}
+                disabled={isBusy}
+                aria-haspopup="menu"
+                aria-expanded={showModelMenu}
+                title={selectedModel || "Choose a GGUF model"}
+              >
+                {status.ready && status.settings?.model === selectedModel && <span className="chat-model-dot" aria-hidden="true" />}
+                <span className="chat-model-trigger-label">{modelLabel}</span>
+                <ChevronDown size={15} aria-hidden="true" />
               </button>
 
               {showModelMenu && (
-                <div className="chat-model-dropdown-menu">
-                  <button
-                    className={`chat-model-dropdown-item ${!selectedModel ? "selected" : ""}`}
-                    onClick={() => {
-                      handleModelChange("");
-                      setShowModelMenu(false);
-                    }}
-                  >
-                    No model loaded (Select GGUF)
-                  </button>
+                <div className={`chat-model-menu ${hasMessages ? "up" : ""}`} role="menu">
+                  <div className="chat-model-menu-label">Text models</div>
+                  {models.length === 0 && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="chat-model-menu-item"
+                      onClick={() => {
+                        setShowModelMenu(false);
+                        setActiveTab?.("models");
+                      }}
+                    >
+                      No models yet. Download one in Models
+                    </button>
+                  )}
                   {models.map((m) => {
                     const isActive = m.filename === status.settings?.model && status.ready;
-                    const isSelected = m.filename === selectedModel;
                     return (
                       <button
+                        type="button"
+                        role="menuitem"
                         key={m.filename}
-                        className={`chat-model-dropdown-item ${isSelected ? "selected" : ""} ${isActive ? "active" : ""}`}
+                        className={`chat-model-menu-item ${m.filename === selectedModel ? "selected" : ""}`}
                         onClick={() => {
                           handleModelChange(m.filename);
                           setShowModelMenu(false);
                         }}
                         title={m.filename}
                       >
-                        <span className="chat-model-name-text">{m.filename}</span>
-                        {isActive && <span className="chat-model-active-badge">Active</span>}
+                        <span className="chat-model-menu-name">{m.filename.replace(/\.gguf$/i, "")}</span>
+                        {isActive && <span className="chat-model-menu-badge">Loaded</span>}
                       </button>
                     );
                   })}
-                </div>
-              )}
-            </div>
-            {selectedModel && (!status.ready || status.settings?.model !== selectedModel) && !loadingModel && (
-              <button
-                className="m3-btn m3-btn-filled"
-                onClick={() => handleModelChange(selectedModel)}
-                disabled={isBusy}
-                style={{
-                  height: "38px", padding: "0 16px", fontSize: "0.85rem",
-                  borderRadius: "var(--md-shape-corner-medium)",
-                  background: "var(--md-sys-color-primary)",
-                  color: "var(--md-sys-color-on-primary)",
-                  cursor: "pointer", border: "none", fontWeight: "600",
-                  display: "flex", alignItems: "center", gap: "6px"
-                }}
-              >
-                Load Model
-              </button>
-            )}
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
-            {/* Context gauge */}
-            {(() => {
-              const maxTokens = status.settings?.contextSize || 4096;
-              const used = tokenUsage.total_tokens || 0;
-              const percent = Math.min(100, Math.round((used / maxTokens) * 100));
-              return (
-                <div style={{ display: "flex", alignItems: "center", gap: "7px" }} title={`Context Used: ${used} / ${maxTokens} tokens`}>
-                  <div style={{ position: "relative", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <svg width="32" height="32" viewBox="0 0 40 40">
-                      <circle cx="20" cy="20" r="16" stroke="var(--border-color)" strokeWidth="3" fill="transparent" />
-                      <circle cx="20" cy="20" r="16" stroke="var(--md-sys-color-primary)" strokeWidth="3" fill="transparent"
-                        strokeDasharray={2 * Math.PI * 16}
-                        strokeDashoffset={2 * Math.PI * 16 * (1 - percent / 100)}
-                        strokeLinecap="round" transform="rotate(-90 20 20)"
-                        style={{ transition: "stroke-dashoffset 0.35s" }}
-                      />
-                    </svg>
-                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontSize: "0.58rem", fontWeight: "700", lineHeight: 1 }}>{percent}%</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
-                    <span style={{ fontSize: "0.6rem", color: "var(--md-sys-color-outline)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Context</span>
-                    <span style={{ fontSize: "0.76rem", fontWeight: "600", color: "var(--md-sys-color-on-surface)" }}>{used} / {maxTokens}</span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            <button
-              className="m3-btn m3-btn-outlined"
-              style={{ height: "32px", padding: "0 10px", display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", borderRadius: "var(--md-shape-corner-medium)" }}
-              onClick={handleClearChat}
-              disabled={messages.length === 0}
-            >
-              <Trash2 size={14} />
-              <span>Clear</span>
-            </button>
-          </div>
-        </div>
-
-        {/* ─── Messages area ──────────────────────────────────── */}
-        <div
-          ref={chatMessagesRef}
-          className="chat-messages"
-          onWheel={() => {
-            if (isBusy) followGenerationRef.current = false;
-          }}
-          onTouchMove={() => {
-            if (isBusy) followGenerationRef.current = false;
-          }}
-        >
-          {loadingModel ? (
-            <div className="chat-empty" style={{ maxWidth: "480px", margin: "auto", textAlign: "center", padding: "60px 20px" }}>
-              <LoaderCircle className="progress-spinner" size={48} style={{ color: "var(--md-sys-color-primary)", marginBottom: "16px" }} />
-              <h3 style={{ fontWeight: 600, fontSize: "1.25rem", marginBottom: "8px", color: "var(--md-sys-color-on-surface)" }}>Loading Text Model</h3>
-              <code style={{
-                display: "block", background: "var(--md-sys-color-surface-variant)",
-                color: "var(--md-sys-color-on-surface-variant)", padding: "8px 12px",
-                borderRadius: "6px", fontSize: "0.85rem", marginBottom: "20px",
-                wordBreak: "break-all", fontFamily: "monospace"
-              }}>
-                {loadingModel}
-              </code>
-              <p style={{ fontSize: "0.9rem", color: "var(--md-sys-color-outline)", lineHeight: 1.5, marginBottom: "24px" }}>
-                Initializing llama.cpp server and loading the model weights into memory. This can take up to 30 seconds depending on model size and hardware speed.
-              </p>
-              <button className="m3-btn m3-btn-error" onClick={handleCancelLlmLoad}
-                style={{ display: "inline-flex", alignItems: "center", gap: "8px", height: "38px", padding: "0 16px", fontSize: "0.85rem", borderRadius: "var(--md-shape-corner-medium)" }}
-              >
-                <Square size={14} fill="currentColor" />
-                <span>Cancel Load</span>
-              </button>
-            </div>
-          ) : (
-            <>
-              {messages.length === 0 && (
-                <div className="chat-empty">
-                  <div className="chat-empty-icon">
-                    <Bot size={30} />
-                  </div>
-                  <h3>Local AI Chat</h3>
-                  <p>Your private, offline AI assistant. Choose a GGUF model above and start a conversation — everything stays on your machine.</p>
                   {status.ready && (
-                    <div className="chat-suggestions">
-                      {[
-                        { icon: "✍️", text: "Write a professional email to reschedule a meeting" },
-                        { icon: "💡", text: "Explain how transformers work in simple terms" },
-                        { icon: "🐛", text: "Help me debug this Python code" },
-                        { icon: "📋", text: "Summarize the key points of a topic" },
-                      ].map((s, i) => (
-                        <button
-                          key={i}
-                          className="chat-suggestion-chip"
-                          onClick={() => { setInput(s.text); }}
-                        >
-                          <span style={{ fontSize: "1rem", flexShrink: 0 }}>{s.icon}</span>
-                          <span>{s.text}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <>
+                      <div className="chat-model-menu-divider" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="chat-model-menu-item"
+                        onClick={() => {
+                          handleModelChange("");
+                          setShowModelMenu(false);
+                        }}
+                      >
+                        Unload model
+                      </button>
+                    </>
                   )}
                 </div>
               )}
+            </div>
 
-              {messages.map((message, index) => {
-                const processed = processMessageContent(
-                  Array.isArray(message.content) ? "" : (message.content || ""),
-                  message.reasoning || ""
-                );
-                const displayContent = Array.isArray(message.content) ? message.content : processed.content;
-                const displayReasoning = processed.reasoning;
-                const hasDisplayContent = Array.isArray(displayContent)
-                  ? displayContent.length > 0
-                  : Boolean(String(displayContent || "").trim());
+            {needsLoad && (
+              <button type="button" className="chat-load-btn" onClick={() => handleModelChange(selectedModel)} disabled={isBusy}>
+                Load
+              </button>
+            )}
 
-                return (
-                  <div
-                    key={`${message.role}-${index}`}
-                    className={`chat-message-row ${message.role === "user" ? "user" : "ai"}`}
-                  >
-                    {/* Avatar */}
-                    <div className={`chat-avatar ${message.role === "user" ? "user" : "ai"}`}>
-                      {message.role === "user" ? "You" : "AI"}
-                    </div>
+            {isBusy && status.ready ? (
+              <button type="button" className="chat-composer-stop-btn" onClick={handleStopGeneration} aria-label="Stop generating" title="Stop generating">
+                <Square size={14} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="chat-composer-send-btn"
+                onClick={sendMessage}
+                disabled={(!input.trim() && attachments.length === 0) || !status.ready}
+                aria-label="Send message"
+                title="Send message"
+              >
+                <ArrowUp size={18} strokeWidth={2.25} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
-                    {/* Bubble + stats */}
-                    <div className="chat-bubble-wrap">
-                      <span className="chat-sender-label">
-                        {message.role === "user" ? "You" : "Local AI"}
-                      </span>
-                      {message.role === "assistant" && displayReasoning && (
-                        <ChatThinkingSection
-                          reasoning={displayReasoning}
-                          timeElapsed={Number(message.thinkingDuration) || 0}
-                          isComplete={!message.generationStats || message.generationStats.status === "complete"}
-                        />
-                      )}
-                      {(hasDisplayContent || message.error) && (
-                        <div className={`chat-bubble ${message.error ? "error" : ""}`}>
-                          {Array.isArray(displayContent) ? (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                              {displayContent.map((item, idx) => {
-                                if (item.type === "text") return <MarkdownRenderer key={idx} content={item.text} />;
-                                if (item.type === "image_url") return (
-                                  <img key={idx} src={item.image_url.url} alt="Attached image"
-                                    style={{ maxWidth: "240px", maxHeight: "180px", objectFit: "contain", borderRadius: "8px", marginTop: "4px" }}
-                                  />
-                                );
-                                return null;
-                              })}
-                            </div>
-                          ) : (
-                            <MarkdownRenderer content={displayContent} />
-                          )}
-                        </div>
-                      )}
-                      {message.role === "assistant" && Array.isArray(message.webSources) && message.webSources.length > 0 && (
-                        <div style={{
-                          marginTop: "8px",
-                          padding: "10px 12px",
-                          border: "1px solid var(--border-color)",
-                          borderRadius: "8px",
-                          background: "var(--md-sys-color-surface-container)",
-                          fontSize: "0.8rem",
-                        }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, marginBottom: "6px" }}>
-                            <Globe2 size={13} />
-                            <span>Sources</span>
+  return (
+    <div className="text-chat-layout">
+      <section className="text-chat-main" aria-label="Chat">
+        {loadingModel ? (
+          <div className="chat-home">
+            <div className="chat-loading">
+              <LoaderCircle className="progress-spinner" size={28} aria-hidden="true" />
+              <h1 className="chat-home-title">Loading model</h1>
+              <p className="chat-loading-name">{loadingModel.replace(/\.gguf$/i, "")}</p>
+              <p className="chat-loading-note">
+                Starting llama.cpp and loading the weights into memory. This can take up to 30 seconds depending on model size and hardware.
+              </p>
+              <button type="button" className="m3-btn m3-btn-outlined" onClick={handleCancelLlmLoad}>
+                <Square size={13} fill="currentColor" aria-hidden="true" />
+                <span>Cancel</span>
+              </button>
+            </div>
+          </div>
+        ) : !hasMessages ? (
+          <div className="chat-home">
+            <h1 className="chat-home-title">What should we make today?</h1>
+            {composer}
+            <ul className="chat-home-suggestions">
+              {homeSuggestions.map(({ Icon, label, onClick }) => (
+                <li key={label}>
+                  <button type="button" className="chat-home-suggestion" onClick={onClick}>
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <>
+            <div className="chat-thread-bar">
+              {!sidebarVisible && (
+                <button type="button" className="chat-thread-btn chat-thread-sidebar-btn" onClick={onToggleSidebar} aria-label="Open sidebar" title="Open sidebar">
+                  <PanelLeft size={18} />
+                </button>
+              )}
+              <div
+                className="chat-context"
+                title={`Context used: ${contextUsed} / ${contextMax} tokens`}
+                aria-label={`Context used: ${contextPercent}%`}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="10" r="8" stroke="var(--border-color)" strokeWidth="2.5" fill="none" />
+                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2.5" fill="none"
+                    strokeDasharray={2 * Math.PI * 8}
+                    strokeDashoffset={2 * Math.PI * 8 * (1 - contextPercent / 100)}
+                    strokeLinecap="round" transform="rotate(-90 10 10)"
+                  />
+                </svg>
+                <span>{contextPercent}%</span>
+              </div>
+              <button type="button" className="chat-thread-btn" onClick={handleClearChat} aria-label="Clear this chat" title="Clear this chat">
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            <div
+              ref={chatMessagesRef}
+              className="chat-messages"
+              onScroll={handleMessagesScroll}
+            >
+              <div className="chat-thread">
+                {messages.map((message, index) => {
+                  const processed = processMessageContent(
+                    Array.isArray(message.content) ? "" : (message.content || ""),
+                    message.reasoning || ""
+                  );
+                  const displayContent = Array.isArray(message.content) ? message.content : processed.content;
+                  const displayReasoning = processed.reasoning;
+                  const hasDisplayContent = Array.isArray(displayContent)
+                    ? displayContent.length > 0
+                    : Boolean(String(displayContent || "").trim());
+
+                  return (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`chat-message-row ${message.role === "user" ? "user" : "ai"}`}
+                    >
+                      <span className="sr-only">{message.role === "user" ? "You said:" : "Assistant said:"}</span>
+                      <div className="chat-bubble-wrap">
+                        {message.role === "assistant" && displayReasoning && (
+                          <ChatThinkingSection
+                            reasoning={displayReasoning}
+                            timeElapsed={Number(message.thinkingDuration) || 0}
+                            isComplete={!message.generationStats || message.generationStats.status === "complete"}
+                          />
+                        )}
+                        {(hasDisplayContent || message.error) && (
+                          <div className={`chat-bubble ${message.error ? "error" : ""}`}>
+                            {Array.isArray(displayContent) ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                {displayContent.map((item, idx) => {
+                                  if (item.type === "text") return <MarkdownRenderer key={idx} content={item.text} />;
+                                  if (item.type === "image_url") return (
+                                    <img key={idx} src={item.image_url.url} alt="Attached image"
+                                      style={{ maxWidth: "240px", maxHeight: "180px", objectFit: "contain", borderRadius: "8px", marginTop: "4px" }}
+                                    />
+                                  );
+                                  return null;
+                                })}
+                              </div>
+                            ) : (
+                              <MarkdownRenderer content={displayContent} />
+                            )}
                           </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                        )}
+                        {message.role === "assistant" && Array.isArray(message.webSources) && message.webSources.length > 0 && (
+                          <div className="chat-sources">
+                            <div className="chat-sources-title">
+                              <Globe2 size={13} aria-hidden="true" />
+                              <span>Sources</span>
+                            </div>
                             {message.webSources.map((source, sourceIndex) => (
-                              <a
-                                key={`${source.url}-${sourceIndex}`}
-                                href={source.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                style={{ color: "var(--md-sys-color-primary)", textDecoration: "none", overflowWrap: "anywhere" }}
-                              >
+                              <a key={`${source.url}-${sourceIndex}`} href={source.url} target="_blank" rel="noreferrer">
                                 [{source.index || sourceIndex + 1}] {source.title || source.url}
                               </a>
                             ))}
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {/* Generation stats pill */}
-                      {message.role === "assistant" && message.generationStats && !message.error && (
-                        <>
-                          {message.generationStats.truncated && (
-                            <div className="chat-generation-warning">
-                              Response reached the token limit. Ask "continue" or switch Max Response Tokens to Manual for a larger cap.
+                        {message.role === "assistant" && message.generationStats && !message.error && (
+                          <>
+                            {message.generationStats.truncated && (
+                              <div className="chat-generation-warning">
+                                Response reached the token limit. Ask "continue" or switch Max Response Tokens to Manual for a larger cap.
+                              </div>
+                            )}
+                            <div className={`chat-generation-stats ${message.generationStats.status}`}>
+                              {message.generationStats.status === "starting" ? (
+                                <><LoaderCircle size={12} className="progress-spinner" /> {message.generationStats.web ? "Searching the web…" : message.generationStats.vision ? "Reading the image…" : "Thinking…"}</>
+                              ) : message.generationStats.status === "streaming" ? (
+                                <><Zap size={12} aria-hidden="true" /> {message.generationStats.tokensPerSecond.toFixed(1)} tok/s</>
+                              ) : (
+                                <>{message.generationStats.tokens} tokens · {formatGenerationTime(message.generationStats.seconds)}</>
+                              )}
                             </div>
-                          )}
-                          <div className={`chat-generation-stats ${message.generationStats.status}`}>
-                          {message.generationStats.status === "starting" ? (
-                            <><LoaderCircle size={11} className="progress-spinner" /> {message.generationStats.web ? "Searching web..." : message.generationStats.vision ? "Processing image..." : "Waiting for first token..."}</>
-                          ) : message.generationStats.status === "streaming" ? (
-                            <><span style={{ opacity: 0.7 }}>⚡</span> {message.generationStats.tokensPerSecond.toFixed(1)} tok/s</>
-                          ) : (
-                            <>{message.generationStats.tokens} tokens <span style={{ opacity: 0.5 }}>•</span> {formatGenerationTime(message.generationStats.seconds)}</>
-                          )}
-                          </div>
-                        </>
-                      )}
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* ─── Composer ───────────────────────────────────────── */}
-        <div className="chat-composer">
-          {/* Attachment previews */}
-          {attachments.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", paddingBottom: "10px" }}>
-              {attachments.map((att) => (
-                <div key={att.id} style={{
-                  position: "relative", display: "flex", alignItems: "center", gap: "6px",
-                  padding: "6px 28px 6px 8px",
-                  background: "var(--md-sys-color-surface-variant)",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: "8px", fontSize: "0.8rem", maxWidth: "200px"
-                }}>
-                  {att.type === "image" ? (
-                    <img src={att.dataUrl} alt={att.name} style={{ width: "24px", height: "24px", objectFit: "cover", borderRadius: "3px" }} />
-                  ) : (
-                    <span style={{ fontWeight: 600 }}>📄</span>
-                  )}
-                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--md-sys-color-on-surface-variant)" }} title={att.name}>
-                    {att.name}
-                  </span>
-                  <button
-                    onClick={() => setAttachments(prev => prev.filter(item => item.id !== att.id))}
-                    style={{
-                      position: "absolute", right: "4px", top: "50%", transform: "translateY(-50%)",
-                      background: "none", border: "none", color: "var(--md-sys-color-error)",
-                      cursor: "pointer", padding: "2px", display: "flex", alignItems: "center", justifyContent: "center"
-                    }}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Input container with vertical layout */}
-          <div className="chat-composer-inner">
-            <div className="chat-composer-textarea-container">
-              <textarea
-                ref={textareaRef}
-                className="chat-composer-textarea"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder={status.ready ? "Message your local model... (Shift+Enter for new line)" : "Select and load a GGUF model above to begin"}
-                disabled={!status.ready || isBusy}
-                rows={1}
-              />
-            </div>
-
-            <div className="chat-composer-toolbar">
-              <div className="chat-composer-toolbar-left">
-                <input type="file" ref={fileInputRef} style={{ display: "none" }} multiple onChange={handleFileChange} />
-                <button
-                  className="chat-composer-attach-btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!status.ready || isBusy}
-                  title={status.ready ? "Attach files (text/code) or images (vision models only)" : "Select and load a GGUF model to attach files"}
-                >
-                  <Paperclip size={17} />
-                </button>
-                <button
-                  className={`chat-composer-deepthink-btn web-search-btn ${useWebSearch ? "active" : ""}`}
-                  onClick={() => setUseWebSearch((value) => !value)}
-                  disabled={!status.ready || isBusy}
-                  title={useWebSearch ? "Disable web search" : "Enable web search"}
-                >
-                  <Globe2 size={14} />
-                  <span>Web</span>
-                </button>
-
-                {status.ready && supportsThinking && (
-                  <button
-                    className={`chat-composer-deepthink-btn deepthink-btn ${deepThinkEnabled ? "active" : ""}`}
-                    onClick={handleThinkingToggle}
-                    title={deepThinkEnabled ? "Disable DeepThink reasoning" : "Enable DeepThink reasoning"}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={deepThinkEnabled ? "rotate-anim" : ""}>
-                      <circle cx="12" cy="12" r="3" />
-                      <ellipse cx="12" cy="12" rx="3" ry="9" />
-                      <ellipse cx="12" cy="12" rx="9" ry="3" />
-                    </svg>
-                    <span>DeepThink</span>
-                  </button>
-                )}
+                  );
+                })}
               </div>
-
-              <div className="chat-composer-toolbar-right">
-                {isBusy && status.ready ? (
-                  <button className="chat-composer-stop-btn" onClick={handleStopGeneration} title="Stop generation">
-                    <Square size={15} fill="currentColor" />
-                  </button>
-                ) : (
-                  <button
-                    className="chat-composer-send-btn"
-                    onClick={sendMessage}
-                    disabled={(!input.trim() && attachments.length === 0) || !status.ready}
-                    title="Send message"
-                  >
-                    <Send size={17} />
-                  </button>
-                )}
-              </div>
+              <div ref={bottomRef} />
             </div>
-          </div>
-          <div className="chat-composer-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
-        </div>
+
+            <div className="chat-composer-dock">{composer}</div>
+          </>
+        )}
       </section>
     </div>
   );
@@ -1343,25 +1281,19 @@ function parseInlineMarkdown(text) {
       return <MathFormula key={idx} tex={part.slice(1, -1)} />;
     }
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={idx} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
     }
     if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={idx} style={{ 
-        fontFamily: "monospace", 
-        background: "var(--md-sys-color-surface-variant)", 
-        padding: "2px 4px", 
-        borderRadius: "4px",
-        fontSize: "0.85rem"
-      }}>{part.slice(1, -1)}</code>;
+      return <code key={idx} className="markdown-inline-code">{part.slice(1, -1)}</code>;
     }
     if (part.startsWith("*") && part.endsWith("*")) {
-      return <em key={idx} style={{ fontStyle: "italic" }}>{part.slice(1, -1)}</em>;
+      return <em key={idx}>{part.slice(1, -1)}</em>;
     }
     if (part.startsWith("[") && part.includes("](") && part.endsWith(")")) {
       const match = part.match(/\[(.*?)\]\((.*?)\)/);
       if (match) {
         return (
-          <a key={idx} href={match[2]} target="_blank" rel="noopener noreferrer" style={{ color: "var(--md-sys-color-primary)", textDecoration: "underline" }}>
+          <a key={idx} href={match[2]} target="_blank" rel="noopener noreferrer" className="markdown-link">
             {match[1]}
           </a>
         );
@@ -1379,7 +1311,7 @@ export function MarkdownRenderer({ content }) {
   const splitTableRow = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
 
   return (
-    <div className="markdown-body" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <div className="markdown-body">
       {parts.map((part, index) => {
         if (part.length > 4 && part.startsWith("$$") && part.endsWith("$$")) {
           return <MathFormula key={index} tex={part.slice(2, -2).trim()} display />;
@@ -1392,20 +1324,8 @@ export function MarkdownRenderer({ content }) {
           const lang = match ? match[1] : "";
           const code = match ? match[2] : part.slice(3, -3);
           return (
-            <pre key={index} style={{ 
-              background: "var(--md-sys-color-surface-variant)", 
-              color: "var(--md-sys-color-on-surface-variant)",
-              padding: "12px", 
-              borderRadius: "6px", 
-              fontFamily: "monospace", 
-              fontSize: "0.85rem",
-              overflowX: "auto",
-              margin: "6px 0",
-              border: "1px solid var(--border-color)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all"
-            }}>
-              {lang && <div style={{ fontSize: "0.72rem", color: "var(--md-sys-color-outline)", marginBottom: "4px", textTransform: "uppercase", fontWeight: 600 }}>{lang}</div>}
+            <pre key={index} className="markdown-code-block">
+              {lang && <div className="markdown-code-lang">{lang}</div>}
               <code>{code.trim()}</code>
             </pre>
           );
@@ -1429,6 +1349,17 @@ export function MarkdownRenderer({ content }) {
               }
               i -= 1;
               blocks.push({ type: "table", header, rows });
+            } else if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+              if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
+              blocks.push({ type: "hr" });
+            } else if (trimmed.startsWith(">")) {
+              const quoteLine = trimmed.replace(/^>\s?/, "");
+              if (currentBlock && currentBlock.type === "quote") {
+                currentBlock.lines.push(quoteLine);
+              } else {
+                if (currentBlock) { blocks.push(currentBlock); }
+                currentBlock = { type: "quote", lines: [quoteLine] };
+              }
             } else if (trimmed.startsWith("### ")) {
               if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
               blocks.push({ type: "h4", content: trimmed.slice(4) });
@@ -1458,7 +1389,6 @@ export function MarkdownRenderer({ content }) {
                 }
               } else if (trimmed === "") {
                 if (currentBlock) { blocks.push(currentBlock); currentBlock = null; }
-                blocks.push({ type: "spacer" });
               } else {
                 if (currentBlock && currentBlock.type === "p") {
                   currentBlock.lines.push(line);
@@ -1476,24 +1406,24 @@ export function MarkdownRenderer({ content }) {
           return blocks.map((block, blockIdx) => {
             switch (block.type) {
               case "h4":
-                return <h4 key={blockIdx} style={{ fontSize: "1.05rem", fontWeight: 700, margin: "10px 0 4px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h4>;
+                return <h4 key={blockIdx}>{parseInlineMarkdown(block.content)}</h4>;
               case "h3":
-                return <h3 key={blockIdx} style={{ fontSize: "1.2rem", fontWeight: 700, margin: "14px 0 6px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h3>;
+                return <h3 key={blockIdx}>{parseInlineMarkdown(block.content)}</h3>;
               case "h2":
-                return <h2 key={blockIdx} style={{ fontSize: "1.35rem", fontWeight: 700, margin: "18px 0 8px 0", color: "var(--md-sys-color-primary)" }}>{parseInlineMarkdown(block.content)}</h2>;
+                return <h2 key={blockIdx}>{parseInlineMarkdown(block.content)}</h2>;
               case "ul":
                 return (
-                  <ul key={blockIdx} style={{ margin: "6px 0 6px 24px", padding: 0, listStyleType: "disc", display: "block" }}>
+                  <ul key={blockIdx}>
                     {block.items.map((item, itemIdx) => (
-                      <li key={itemIdx} style={{ fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "4px", display: "list-item" }}>{parseInlineMarkdown(item)}</li>
+                      <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
                     ))}
                   </ul>
                 );
               case "ol":
                 return (
-                  <ol key={blockIdx} style={{ margin: "6px 0 6px 24px", padding: 0, listStyleType: "decimal", display: "block" }}>
+                  <ol key={blockIdx}>
                     {block.items.map((item, itemIdx) => (
-                      <li key={itemIdx} style={{ fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "4px", display: "list-item" }}>{parseInlineMarkdown(item)}</li>
+                      <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
                     ))}
                   </ol>
                 );
@@ -1514,10 +1444,25 @@ export function MarkdownRenderer({ content }) {
                     </table>
                   </div>
                 );
-              case "spacer":
-                return <div key={blockIdx} style={{ height: "6px" }} />;
-              case "p":
-                return <p key={blockIdx} style={{ margin: "2px 0", fontSize: "0.9rem", lineHeight: 1.5 }}>{parseInlineMarkdown(block.lines.join(" "))}</p>;
+              case "hr":
+                return <hr key={blockIdx} />;
+              case "quote":
+                return <blockquote key={blockIdx}>{parseInlineMarkdown(block.lines.join(" "))}</blockquote>;
+              case "p": {
+                // A lone bold line such as "🧠 **Analysis:**" acts as a section label, so it gets heading spacing
+                const isSectionLabel = block.lines.length === 1 && /^[^\w*]*\*\*[^*]+\*\*:?$/u.test(block.lines[0].trim());
+                // Keep the model's single line breaks (addresses, emails, poems)
+                return (
+                  <p key={blockIdx} className={isSectionLabel ? "md-section-label" : undefined}>
+                    {block.lines.map((line, lineIdx) => (
+                      <React.Fragment key={lineIdx}>
+                        {lineIdx > 0 && <br />}
+                        {parseInlineMarkdown(line.trim())}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                );
+              }
               default:
                 return null;
             }

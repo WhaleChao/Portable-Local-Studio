@@ -59,6 +59,11 @@ export function normalizeModel(model) {
     backendType: model?.backendType || "",
     resolution: model?.resolution || "",
     isProjector: Boolean(model?.isProjector),
+    // Set by the local server: where a linked-in-place file lives, whether it went missing,
+    // and what the file's header says it is ("image" | "text" | "speech")
+    linkedFrom: model?.linkedFrom || "",
+    missing: Boolean(model?.missing),
+    detectedKind: model?.detectedKind || "",
   };
 }
 
@@ -682,6 +687,7 @@ export async function transcribeSpeech(fileOrBlob, options = {}) {
   if (options.threads) params.set("threads", String(options.threads));
   if (options.backendPreference) params.set("backendPreference", options.backendPreference);
   if (options.translate) params.set("translate", "true");
+  if (options.save === false) params.set("save", "false");
 
   const res = await fetch(`/api/speech/transcribe?${params.toString()}`, {
     method: "POST",
@@ -1185,6 +1191,37 @@ function uploadModelFileToEndpoint(file, endpoint, onProgress, signal) {
 }
 
 // Delete model file (Tauri disk deletion or localStorage cleanup)
+// Refile a model under another type ("image" | "text" | "speech")
+export async function moveModelFile(filename, from, to) {
+  const res = await fetch("/api/move-model", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, from, to }),
+  });
+  return await readJsonResponse(res, "The local server returned an invalid move response.");
+}
+
+// Opens the system file dialog (from the local server) and resolves to the chosen path, or "" if cancelled
+export async function pickModelFile(type) {
+  const res = await fetch("/api/pick-model-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type }),
+  });
+  const data = await readJsonResponse(res, "The local server returned an invalid file dialog response.");
+  return data.path || "";
+}
+
+// Use a model file where it already is: the app keeps a link to it instead of a copy
+export async function linkModelFile(filePath, type) {
+  const res = await fetch("/api/link-model", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: filePath, type }),
+  });
+  return await readJsonResponse(res, "The local server returned an invalid link response.");
+}
+
 export async function deleteModel(filename) {
   if (isTauri()) {
     return await invoke("delete_model_file", { filename });

@@ -1,5 +1,5 @@
 import React, { memo, useState, useRef, useEffect } from "react";
-import { Square, RefreshCw, Sun, Moon, Palette, Check, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Square, RefreshCw, Sun, Moon, Palette, Check, PanelLeft } from "lucide-react";
 import { THEMES } from "../themes";
 
 const truncateModelName = (name) => {
@@ -16,7 +16,6 @@ const truncateModelName = (name) => {
 };
 
 function TopStatusBar({ 
-  telemetry, 
   serverRunning, 
   activeModel, 
   isLlmLoaded = false, 
@@ -40,18 +39,10 @@ function TopStatusBar({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const formatGb = (value, { allowZero = false } = {}) => {
-    const number = Number(value);
-    if (!Number.isFinite(number) || number < 0) return "--";
-    if (number === 0 && !allowZero) return "--";
-    return number.toFixed(number >= 10 ? 0 : 1);
-  };
-
   const getStatusText = () => {
-    if (isLlmLoaded) return "Model Loaded (Text)";
-    if (activeModel) return "Model Loaded (Image)";
-    if (serverRunning) return "Server Active";
-    return "Local Mode";
+    if (isLlmLoaded || activeModel) return "Model loaded";
+    if (serverRunning) return "Server running";
+    return "Running locally";
   };
 
   const getStatusClass = () => {
@@ -65,37 +56,35 @@ function TopStatusBar({
   return (
     <div className="top-status-bar">
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <button
-          onClick={onToggleSidebar}
-          className="sidebar-toggle-btn"
-          title={sidebarVisible ? "Collapse Sidebar" : "Expand Sidebar"}
-        >
-          {sidebarVisible ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
-        </button>
+        {!sidebarVisible && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="sidebar-toggle-btn"
+            aria-label="Open sidebar"
+            title="Open sidebar"
+          >
+            <PanelLeft size={18} />
+          </button>
+        )}
 
-        <div className="current-model-info">
+        <div className="current-model-info status-pill">
           <div className={getStatusClass()}></div>
-          <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-            {getStatusText()}
-          </span>
+          <span>{getStatusText()}</span>
           {(activeModel || (typeof isLlmLoaded === "string" && isLlmLoaded)) && (
-            <>
-              <span style={{ color: "var(--md-sys-color-outline-variant)" }}>|</span>
-              <span 
-                style={{ color: "var(--md-sys-color-primary)", fontWeight: 700 }}
-                title={activeModel || isLlmLoaded}
-              >
-                {truncateModelName(activeModel || isLlmLoaded)}
-              </span>
-            </>
+            <span className="status-pill-model" title={activeModel || isLlmLoaded}>
+              · {truncateModelName(activeModel || isLlmLoaded)}
+            </span>
           )}
         </div>
       </div>
 
       <div className="telemetry-group" style={{ position: "relative" }}>
         <button
+          type="button"
           className="theme-toggle-btn"
           onClick={() => setTheme(isDark ? "light" : "dark")}
+          aria-label={`Switch to ${isDark ? "light" : "dark"} theme`}
           title={`Switch to ${isDark ? "light" : "dark"} theme`}
         >
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
@@ -103,10 +92,12 @@ function TopStatusBar({
 
         <div ref={menuRef} style={{ position: "relative", display: "inline-block" }}>
           <button
+            type="button"
+            aria-label="Choose a color theme"
+            aria-expanded={showThemeMenu}
             className={`theme-toggle-btn ${showThemeMenu ? "active" : ""}`}
             onClick={() => setShowThemeMenu(!showThemeMenu)}
             title="Choose a custom color theme"
-            style={{ marginRight: "12px" }}
           >
             <Palette size={18} />
           </button>
@@ -154,22 +145,6 @@ function TopStatusBar({
           </button>
         )}
 
-        {/* CPU Telemetry Chip */}
-        <div className="telemetry-chip" title="CPU Utilization">
-          <span>CPU: {Number.isFinite(Number(telemetry.cpu_usage)) ? telemetry.cpu_usage : "--"}%</span>
-        </div>
-
-        {/* RAM Telemetry Chip */}
-        <div className="telemetry-chip" title="System Memory Usage">
-          <span>RAM: {formatGb(telemetry.ram_used_gb)} / {formatGb(telemetry.ram_total_gb)} GB</span>
-        </div>
-
-        {/* GPU VRAM Telemetry Chip */}
-        {telemetry.vram_total_gb > 0 && (
-          <div className="telemetry-chip" title={`${telemetry.gpu_name} VRAM`}>
-            <span>VRAM: {formatGb(telemetry.vram_used_gb, { allowZero: true })} / {formatGb(telemetry.vram_total_gb)} GB</span>
-          </div>
-        )}
       </div>
     </div>
   );

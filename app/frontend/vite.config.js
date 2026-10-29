@@ -33,6 +33,10 @@ export default defineConfig(async () => ({
       "/img2img":  { target: "http://127.0.0.1:8080", changeOrigin: true },
       "/v1":       { target: "http://127.0.0.1:8080", changeOrigin: true },
       "/api":      { target: "http://127.0.0.1:1422", changeOrigin: true },
+      // Image generation uses relative /sdapi URLs; serve.cjs forwards them to the active backend port
+      "/sdapi":    { target: "http://127.0.0.1:1422", changeOrigin: true },
+      // Saved voice clips are served by serve.cjs; without this the dev server answers with index.html
+      "/tts-outputs": { target: "http://127.0.0.1:1422", changeOrigin: true },
     }
   },
 }));
