@@ -1,5 +1,6 @@
 import React, { memo, useMemo, useRef, useState, useEffect } from "react";
-import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, Aperture, ChevronRight } from "lucide-react";
+import { Image, Box, Mic, Settings, Trash2, AudioLines, SquarePen, PanelLeftClose, Search, X, ChevronRight } from "lucide-react";
+import BrandMark from "./BrandMark";
 
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 420;
@@ -285,7 +286,10 @@ function Sidebar({
         onKeyDown={resizeWithKeys}
       />
       <div className="sidebar-header">
-        <Aperture className="sidebar-mark" size={24} strokeWidth={1.75} aria-label="Local AI Studio" />
+        <div className="sidebar-brand">
+          <BrandMark className="sidebar-mark" size={24} title="Local Studio" />
+          <span className="sidebar-brand-name">Local Studio</span>
+        </div>
         <div className="sidebar-header-actions">
           <button
             type="button"

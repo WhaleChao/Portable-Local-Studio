@@ -3849,7 +3849,24 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   justify-content: space-between;
   height: 48px;
   padding: 0 0 0 10px;
-  margin-bottom: 8px;
+  margin-bottom: 18px;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidebar-brand-name {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-mark {
