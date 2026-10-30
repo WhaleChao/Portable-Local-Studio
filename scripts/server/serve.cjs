@@ -7249,10 +7249,19 @@ async function getLlmfitRecommendations(useCase = "chat", limit = 10) {
     if (!body) return;
     const { url } = body;
     if (!url) return json(res, 400, { error: "URL is required" });
-    const urlIssue = getModelDownloadUrlIssue(url);
+    // Catalog entries pass a filename for URLs that don't end in one (e.g. Civitai API links).
+    const overrideFilename = body.filename ? path.basename(String(body.filename)) : null;
+    if (overrideFilename && !/\.(safetensors|gguf|ckpt)$/i.test(overrideFilename)) {
+      return json(res, 400, { ok: false, error: "Image model filename must end in .safetensors, .gguf or .ckpt." });
+    }
+    const urlIssue = overrideFilename
+      ? (/^https?:\/\//i.test(String(url)) ? "" : "Only http(s) download URLs are supported.")
+      : getModelDownloadUrlIssue(url);
     if (urlIssue) return json(res, 400, { ok: false, error: urlIssue });
+    // startModelDownload only guards against concurrent downloads when no filename is passed.
+    if (overrideFilename && downloadState.active) return json(res, 409, { ok: false, error: "Another model download is already active." });
 
-    startModelDownload(url);
+    startModelDownload(url, overrideFilename);
     return json(res, 200, { ok: true, message: "Download started" });
   }
 

@@ -165,6 +165,16 @@ const MODEL_LIBRARY = [
         recommendedTiers: ["Low"],
       },
       {
+        name: "epiCRealism Natural Sin",
+        filename: "epicrealism_naturalSinRC1VAE.safetensors",
+        format: "Safetensors",
+        approxSize: "2.1 GB",
+        resolution: "512x512",
+        notes: "Natural, photorealistic SD 1.5 model for people, portraits, and real-world scenes.",
+        url: "https://civitai.com/api/download/models/143906?type=Model&format=SafeTensor&size=pruned&fp=fp16",
+        recommendedTiers: ["Low"],
+      },
+      {
         name: "ReV Animated v1.2.2",
         filename: "rev-animated-v1-2-2.safetensors",
         format: "Safetensors",
@@ -716,7 +726,7 @@ function ModelManager({
       pendingCompanionDownloadRef.current = companion;
       let res;
       if (activeModelType === "image") {
-        res = await downloadModel(url);
+        res = await downloadModel(url, expectedFilename);
       } else if (activeModelType === "text") {
         res = await downloadLlmModel(url, expectedFilename, companion);
       } else if (activeModelType === "speech") {

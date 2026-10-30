@@ -1282,12 +1282,12 @@ export async function waitForServerReady(maxAttempts = 30) {
 }
 
 // Start model file download from a URL on the server
-export async function downloadModel(url) {
+export async function downloadModel(url, filename = null) {
   try {
     const res = await fetch("/api/download-model", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url, filename })
     });
     return await res.json();
   } catch (e) {
