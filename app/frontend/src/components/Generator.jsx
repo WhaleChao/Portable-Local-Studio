@@ -541,6 +541,8 @@ function Generator({
 
       setOutputImage(savedUrl);
       setStageUrl(savedUrl);
+      // Clear the box for the next idea; the prompt is saved with the image and "Reuse prompt" brings it back
+      setPrompt("");
       setOutputSeed(result.seed);
       setGenDuration(result.duration_sec);
 
