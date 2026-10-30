@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle, Trash2, Square, X, ChevronDown, Globe2, Plus, PenLine, Lightbulb, Zap, FileText, ArrowUp, Brain, Mic, AudioLines, Image as ImageIcon, PanelLeft } from "lucide-react";
 import {
+  getBackendStatus,
+  stopServer,
   getDownloadProgress,
   getLlmStatus,
   listLlmModels,
@@ -528,14 +530,29 @@ function TextChat({
       return;
     }
 
+    // Only one large model fits at a time: if an image model is loaded, ask before swapping
+    const imageStatus = await getBackendStatus().catch(() => null);
+    const imageModel = imageStatus?.ready && imageStatus.settings?.model
+      ? imageStatus.settings.model.split(/[\\/]/).pop().replace(/\.(safetensors|ckpt|gguf)$/i, "")
+      : null;
+    if (imageModel) {
+      const confirmed = await showConfirm({
+        title: "Unload the image model?",
+        message: `${imageModel} is loaded for images. Only one large model can run at a time, so it will be unloaded to load ${filename.replace(/\.gguf$/i, "")}. You can load it again from Images later.`,
+        confirmLabel: "Unload and load",
+      });
+      if (!confirmed) return;
+    }
+
     setSelectedModel(filename);
     localStorage.setItem("selectedLlmModel", filename);
     setIsBusy(true);
     setLoadingModel(filename);
     try {
-      // Unload active image engine if running
-      if (setActiveModel) setActiveModel(null);
-      if (setServerRunning) setServerRunning(false);
+      if (imageModel) {
+        await stopServer();
+        if (setServerRunning) setServerRunning(false);
+      }
 
       const result = await startLlm(filename, {
         threads: textSettings?.threads || specs?.cpu_cores_physical || 4,
@@ -882,16 +899,14 @@ function TextChat({
   };
 
   const hasMessages = messages.length > 0;
-  const needsLoad = Boolean(selectedModel) && (!status.ready || status.settings?.model !== selectedModel) && !loadingModel;
-  const modelLabel = selectedModel ? selectedModel.replace(/\.gguf$/i, "") : "Choose a model";
+  // Shows what is actually loaded, not just what was last chosen
+  const modelLabel = status.ready && status.settings?.model
+    ? status.settings.model.replace(/\.gguf$/i, "")
+    : "Select model";
   const contextMax = status.settings?.contextSize || 4096;
   const contextUsed = tokenUsage.total_tokens || 0;
   const contextPercent = Math.min(100, Math.round((contextUsed / contextMax) * 100));
-  const composerPlaceholder = status.ready
-    ? "Ask anything"
-    : selectedModel
-      ? "Load the model to start chatting"
-      : "Choose a model to start chatting";
+  const composerPlaceholder = status.ready ? "Ask anything" : "Select a model to start chatting";
 
   const homeSuggestions = [
     ...(status.ready ? [
@@ -993,9 +1008,9 @@ function TextChat({
                 disabled={isBusy}
                 aria-haspopup="menu"
                 aria-expanded={showModelMenu}
-                title={selectedModel || "Choose a GGUF model"}
+                title={status.ready ? status.settings?.model : "Choose a text model to load"}
               >
-                {status.ready && status.settings?.model === selectedModel && <span className="chat-model-dot" aria-hidden="true" />}
+                {status.ready && <span className="chat-model-dot" aria-hidden="true" />}
                 <span className="chat-model-trigger-label">{modelLabel}</span>
                 <ChevronDown size={15} aria-hidden="true" />
               </button>
@@ -1023,7 +1038,7 @@ function TextChat({
                         type="button"
                         role="menuitem"
                         key={m.filename}
-                        className={`chat-model-menu-item ${m.filename === selectedModel ? "selected" : ""}`}
+                        className={`chat-model-menu-item ${isActive ? "selected" : ""}`}
                         onClick={() => {
                           handleModelChange(m.filename);
                           setShowModelMenu(false);
@@ -1054,12 +1069,6 @@ function TextChat({
                 </div>
               )}
             </div>
-
-            {needsLoad && (
-              <button type="button" className="chat-load-btn" onClick={() => handleModelChange(selectedModel)} disabled={isBusy}>
-                Load
-              </button>
-            )}
 
             {isBusy && status.ready ? (
               <button type="button" className="chat-composer-stop-btn" onClick={handleStopGeneration} aria-label="Stop generating" title="Stop generating">

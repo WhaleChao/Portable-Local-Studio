@@ -596,6 +596,17 @@
 
 
 /* ---- Composer ---- */
+.images-picker-spin {
+  flex-shrink: 0;
+  animation: images-spin 0.9s linear infinite;
+}
+
+/* Two lines to start, growing to about five (height is set as you type) */
+.images-prompt {
+  min-height: calc(1.05rem * 1.5 * 2 + 4px);
+  max-height: none;
+}
+
 .images-composer .chat-composer-toolbar {
   align-items: flex-end;
 }

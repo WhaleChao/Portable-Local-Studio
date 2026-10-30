@@ -4144,6 +4144,45 @@ html[data-theme]:not([data-theme="light"]):not([data-theme="dark"]) {
   color: var(--md-sys-color-on-surface-variant);
 }
 
+/* A loaded model: kind, name, and an unload button at the end */
+.status-pill-loaded {
+  padding-right: 4px;
+}
+
+.status-pill-unload {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-sys-color-outline);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.status-pill-unload:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent);
+  color: var(--md-sys-color-error);
+}
+
+.status-pill-unload:focus-visible {
+  outline: 2px solid var(--md-sys-color-on-surface);
+  outline-offset: 1px;
+}
+
+.status-pill-unload:disabled {
+  cursor: default;
+}
+
+.status-pill-spin {
+  animation: rotateThinking 0.9s linear infinite;
+}
+
 .status-pill-model {
   max-width: 260px;
   overflow: hidden;

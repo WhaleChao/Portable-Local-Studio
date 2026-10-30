@@ -7,7 +7,7 @@ import Settings from "./components/Settings";
 import TextChat from "./components/TextChat";
 import SpeechTranscriber from "./components/SpeechTranscriber";
 import TextToSpeech from "./components/TextToSpeech";
-import { cleanupCandidates, formatBytes, getCleanupCandidates, getDiagnostics, getHardwareSpecs, getHealth, getTelemetry, getBackendOptions, getBackendStatus, listGeneratedOutputs, listLlmConversations, saveLlmConversation, deleteLlmConversation, listSpeechTranscriptions, deleteSpeechTranscription, listTtsOutputs, deleteTtsOutput, stopServer } from "./services/api";
+import { cleanupCandidates, formatBytes, getCleanupCandidates, getDiagnostics, getHardwareSpecs, getHealth, getTelemetry, getBackendOptions, getBackendStatus, listGeneratedOutputs, listLlmConversations, saveLlmConversation, deleteLlmConversation, listSpeechTranscriptions, deleteSpeechTranscription, listTtsOutputs, deleteTtsOutput } from "./services/api";
 import "./App.css";
 
 // Screens live in the URL hash (#/chat, #/chat/<id>, #/images, ...) so a refresh
@@ -81,7 +81,6 @@ function App() {
   // Model & Server Status
   const [activeModel, setActiveModel] = useState(null);
   const [serverRunning, setServerRunning] = useState(false);
-  const [isStoppingServer, setIsStoppingServer] = useState(false);
   const [isLlmLoaded, setIsLlmLoaded] = useState(false);
   const [backendOptions, setBackendOptions] = useState({
     options: [{ id: "cpu", label: "CPU", available: true }],
@@ -758,20 +757,10 @@ function App() {
     />
   ), [sidebarVisible, toggleSidebar, activeTab, openTabFromSidebar, specs, telemetry, handleNewChat, conversations, activeConversationId, handleDeleteConversation, speechTranscriptions, selectedSpeechTranscript, handleDeleteSpeechTranscription]);
 
-  const handleStopServer = useCallback(async () => {
-    if (!serverRunning || isStoppingServer) return;
-    setIsStoppingServer(true);
-    try {
-      await stopServer();
-      setServerRunning(false);
-      setActiveModel(null);
-    } catch (err) {
-      console.error("Failed to stop server:", err);
-      showAlert({ title: "Stop Server Failed", message: err.message || String(err), danger: true });
-    } finally {
-      setIsStoppingServer(false);
-    }
-  }, [serverRunning, isStoppingServer, showAlert]);
+  // The status bar unloads models itself; keep the screens' view in step. The picked image
+  // model stays selected so the next generate loads it again.
+  const handleImageUnloaded = useCallback(() => setServerRunning(false), []);
+  const handleTextUnloaded = useCallback(() => setIsLlmLoaded(false), []);
 
   return (
     <div className="app-container">
@@ -783,11 +772,8 @@ function App() {
         {/* Top telemetry specs chips bar */}
         {showTopBar && (
         <TopStatusBar
-          serverRunning={serverRunning}
-          activeModel={activeModel}
-          isLlmLoaded={isLlmLoaded}
-          onStopServer={handleStopServer}
-          isStoppingServer={isStoppingServer}
+          onImageUnloaded={handleImageUnloaded}
+          onTextUnloaded={handleTextUnloaded}
           theme={theme}
           setTheme={setTheme}
           sidebarVisible={sidebarVisible}

@@ -1,4 +1,4 @@
-import React, { memo, useState, useRef, useCallback, useEffect } from "react";
+import React, { memo, useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import {
   ArrowUp,
   Check,
@@ -10,6 +10,7 @@ import {
   Download,
   CheckSquare,
   ImagePlus,
+  Loader2,
   LayoutGrid,
   Maximize2,
   Minimize2,
@@ -128,6 +129,8 @@ function Generator({
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRestartingBackend, setIsRestartingBackend] = useState(false);
   const [restartLoadProgress, setRestartLoadProgress] = useState(null);
+  // Loading a model picked in the menu: shown in the picker, not as the big stage progress frame
+  const [isPickerLoading, setIsPickerLoading] = useState(false);
   // Image models listed in the composer's model picker (null while loading)
   const [imageModels, setImageModels] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -231,12 +234,13 @@ function Generator({
 
   const handleClearBaseImage = () => setBaseImage(null);
 
-  // Trigger main image generation process
-  const handleGenerate = async () => {
-    if (!prompt.trim()) return;
-
+  // Starts (or restarts) the image backend with targetModel and the current settings, showing
+  // load progress (in the model picker when quiet, else on the stage). Resolves true once
+  // it is ready, false after showing an error.
+  const prepareImageBackend = async (targetModel, { quiet = false } = {}) => {
+    const setLoading = quiet ? setIsPickerLoading : setIsRestartingBackend;
     setErrorMsg(null);
-    setIsRestartingBackend(true);
+    setLoading(true);
     setRestartLoadProgress(null);
 
     let needsRestart = false;
@@ -245,7 +249,7 @@ function Generator({
       if (status && status.settings) {
         const settings = status.settings;
         const currentModelName = settings.model ? settings.model.split(/[\\/]/).pop() : null;
-        const targetModelName = activeModel ? activeModel.split(/[\\/]/).pop() : null;
+        const targetModelName = targetModel ? targetModel.split(/[\\/]/).pop() : null;
         const requestedBackend = constraints.backendType || (constraints.useGpu === false ? "cpu" : "auto");
         const currentBackend = settings.backendType || (settings.useGpu === false ? "cpu" : "auto");
         const shouldCompareModel = requestedBackend !== "openvino-npu";
@@ -272,7 +276,7 @@ function Generator({
     if (needsRestart) {
       try {
         console.log("Settings out of sync, restarting backend...");
-        await startServer(activeModel, constraints);
+        await startServer(targetModel, constraints);
                 let isReady = false;
         let crashError = null;
         const maxStartupPolls = (constraints.backendType === "openvino-npu" || constraints.backendType === "apple-npu") ? 1200 : 240;
@@ -310,12 +314,19 @@ function Generator({
       } catch (err) {
         console.error("Failed to restart backend:", err);
         setErrorMsg(err.message || "Failed to sync settings with backend.");
-        setIsRestartingBackend(false);
-        return;
+        setLoading(false);
+        return false;
       }
     }
-    setIsRestartingBackend(false);
+    setLoading(false);
     setRestartLoadProgress(null);
+    return true;
+  };
+
+  // Trigger main image generation process
+  const handleGenerate = async () => {
+    if (!prompt.trim()) return;
+    if (!(await prepareImageBackend(activeModel))) return;
 
     if (timerRef.current) clearInterval(timerRef.current);
     setIsGenerating(true);
@@ -613,12 +624,25 @@ function Generator({
   const [backendReady, setBackendReady] = useState(false);
   const composerRef = useRef(null);
   const textareaRef = useRef(null);
+
+  // The prompt box grows with the text, up to about five lines, then scrolls
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 24;
+    const maxHeight = Math.round(lineHeight * 5 + 8);
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [prompt]);
   const fileInputRef = useRef(null);
   const viewerRef = useRef(null);
   const viewerCloseRef = useRef(null);
   const viewerReturnFocusRef = useRef(null);
 
-  const isBusy = isGenerating || isCancelling || isRestartingBackend;
+  const isBusy = isGenerating || isCancelling || isRestartingBackend || isPickerLoading;
+  // The stage only takes over for generating (and loading that a generate started)
+  const stageBusy = isGenerating || isCancelling || isRestartingBackend;
   const isNpuBackend = constraints.backendType === "apple-npu" || constraints.backendType === "openvino-npu";
   const isOpenVinoNpu = constraints.backendType === "openvino-npu";
   const maxSteps = isOpenVinoNpu ? 8 : 60;
@@ -630,7 +654,7 @@ function Generator({
       setBackendReady(false);
       return undefined;
     }
-    getBackendStatus()
+    const check = () => getBackendStatus()
       .then((status) => {
         if (cancelled) return;
         const loadedName = status?.settings?.model ? status.settings.model.split(/[\\/]/).pop() : null;
@@ -640,10 +664,14 @@ function Generator({
       .catch(() => {
         if (!cancelled) setBackendReady(false);
       });
+    check();
+    // Also notice unloads made elsewhere, such as the status bar's unload button
+    const timer = setInterval(check, 3000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [activeModel, isGenerating, isRestartingBackend, isCancelling, constraints.backendType]);
+  }, [activeModel, isGenerating, isRestartingBackend, isPickerLoading, isCancelling, constraints.backendType]);
 
   // Close composer menus on outside click
   useEffect(() => {
@@ -690,17 +718,49 @@ function Generator({
     handleGenerate();
   };
 
-  // Regular weights are picked here and started on the next generate with the current
-  // constraints (the same thing Models does for them). CoreML / OpenVINO model formats
+  // Regular weights are loaded as soon as they are picked, with the current constraints
+  // (the same thing Models does for them). CoreML / OpenVINO model formats
   // need load-time overrides that only Models applies, so those open Models instead.
-  const handlePickModel = (model) => {
+  const handlePickModel = async (model) => {
     setOpenMenu(null);
     const needsModelsScreen = model.format === "CoreML" || ["apple-npu", "openvino-npu"].includes(model.backendType);
     if (needsModelsScreen || !setActiveModel) {
       setActiveTab?.("models");
       return;
     }
+    if (model.filename === activeModel && backendReady) return;
+    // Only one large model runs at a time. If another model holds it (a different image
+    // model, or a chat model), ask first; on yes, unload it and load the picked one now.
+    const imageStatus = await getBackendStatus().catch(() => null);
+    const loadedImage = imageStatus?.ready && imageStatus.settings?.model
+      ? imageStatus.settings.model.split(/[\\/]/).pop()
+      : null;
+    const otherImage = loadedImage && loadedImage !== model.filename ? loadedImage : null;
+    const llm = otherImage ? null : await getLlmStatus();
+    const chatModel = (llm?.running || llm?.ready) ? llm?.settings?.model : null;
+
+    if (otherImage || chatModel) {
+      const confirmed = await showConfirm({
+        title: otherImage ? "Switch image model?" : "Unload the chat model?",
+        message: otherImage
+          ? `${modelDisplayName(otherImage)} is loaded. It will be unloaded to load ${modelDisplayName(model.filename)}.`
+          : `${modelDisplayName(chatModel)} is loaded for chat. Only one large model can run at a time, so it will be unloaded to load ${modelDisplayName(model.filename)}. You can load it again from chat later.`,
+        confirmLabel: "Unload and load",
+      });
+      if (!confirmed) return;
+    }
+
     setActiveModel(model.filename);
+    setIsPickerLoading(true);
+    try {
+      if (otherImage) await stopServer();
+      if (chatModel) await stopLlm();
+    } catch (err) {
+      setIsPickerLoading(false);
+      setErrorMsg(`Couldn't unload ${modelDisplayName(otherImage || chatModel)}: ${err.message || err}`);
+      return;
+    }
+    await prepareImageBackend(model.filename, { quiet: true });
   };
 
   const updateConstraint = (key, value) => {
@@ -926,7 +986,8 @@ function Generator({
   };
 
   // ---- Composer ----
-  const canGenerate = Boolean(prompt.trim()) && Boolean(activeModel) && !isBusy;
+  // Generating needs a loaded model; picking one in the menu loads it
+  const canGenerate = Boolean(prompt.trim()) && Boolean(activeModel) && backendReady && !isBusy;
 
   const submit = () => {
     if (!canGenerate) return;
@@ -942,9 +1003,14 @@ function Generator({
   };
 
   const seedIsRandom = constraints.seed === -1 || constraints.seed === undefined || constraints.seed === null;
-  const modelLabel = activeModel ? modelDisplayName(activeModel) : "Choose model";
+  // Shows what is actually loaded, not just what was last picked
+  const modelLabel = activeModel && backendReady
+    ? modelDisplayName(activeModel)
+    : activeModel && (isRestartingBackend || isPickerLoading)
+    ? `Loading ${modelDisplayName(activeModel)}…${restartLoadProgress?.progress ? ` ${Math.round(restartLoadProgress.progress)}%` : ""}`
+    : "Select model";
   const imageCount = generatedImages.length;
-  const showProgressTile = isBusy;
+  const showProgressTile = stageBusy;
 
   const progressTile = showProgressTile && (
     <div
@@ -1075,7 +1141,7 @@ function Generator({
   }, [historyOpen]);
 
   const stageItem = stageUrl ? generatedImages.find((img) => img.url === stageUrl) || null : null;
-  const stageEmpty = !isBusy && !stageItem;
+  const stageEmpty = !stageBusy && !stageItem;
   // The empty screen shows the grid under the prompt instead, like Grok Imagine
   const showHistory = historyOpen && imageCount > 0 && !stageEmpty;
 
@@ -1213,7 +1279,7 @@ function Generator({
       <div className="chat-composer-inner">
         <textarea
           ref={textareaRef}
-          className="chat-composer-textarea"
+          className="chat-composer-textarea images-prompt"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(event) => {
@@ -1222,9 +1288,9 @@ function Generator({
               submit();
             }
           }}
-          placeholder={activeModel ? "Describe an image" : "Choose an image model to start"}
+          placeholder={activeModel && backendReady ? "Describe an image" : "Describe an image, then select a model to load"}
           aria-label="Image prompt"
-          rows={1}
+          rows={2}
         />
 
         <div className="chat-composer-toolbar">
@@ -1478,8 +1544,10 @@ function Generator({
                 aria-expanded={openMenu === "model"}
                 title={activeModel || "Choose an image model"}
               >
-                {backendReady && <span className="chat-model-dot" aria-hidden="true" />}
-                <span className="chat-model-trigger-label">{modelLabel}</span>
+                {isPickerLoading
+                  ? <Loader2 size={14} className="images-picker-spin" aria-hidden="true" />
+                  : backendReady && <span className="chat-model-dot" aria-hidden="true" />}
+                <span className="chat-model-trigger-label" aria-live="polite">{modelLabel}</span>
                 <ChevronDown size={15} aria-hidden="true" />
               </button>
               {openMenu === "model" && (
@@ -1544,7 +1612,7 @@ function Generator({
                 onClick={submit}
                 disabled={!canGenerate}
                 aria-label={baseImage ? "Generate from base image" : "Generate image"}
-                title={!activeModel ? "Choose an image model first" : baseImage ? "Generate from base image" : "Generate image"}
+                title={!(activeModel && backendReady) ? "Select a model first" : baseImage ? "Generate from base image" : "Generate image"}
               >
                 <ArrowUp size={18} aria-hidden="true" />
               </button>
@@ -1672,7 +1740,7 @@ function Generator({
                   </>
                 )}
               </>
-            ) : isBusy ? (
+            ) : stageBusy ? (
               progressTile
             ) : (
               <figure className="images-stage">
