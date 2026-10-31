@@ -29,8 +29,42 @@
 
 ---
 
+## <a id="screenshots"></a>📸 Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/chat.jpg" alt="Offline chat with a local LLM" width="900" />
+  <br />
+  <sub><strong>Chat</strong> with local LLMs, fully offline</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/images.jpg" alt="Image generation with Stable Diffusion" />
+      <br /><sub><strong>Images:</strong> Stable Diffusion generation and gallery</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/transcribe.jpg" alt="Speech to text with Whisper" />
+      <br /><sub><strong>Transcribe:</strong> speech to text with Whisper</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/voice.jpg" alt="Text to speech with Kokoro" />
+      <br /><sub><strong>Voice:</strong> natural text to speech with Kokoro</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/models.jpg" alt="Built-in model manager" />
+      <br /><sub><strong>Models:</strong> browse and download models in one click</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 
 ## 📖 Table of Contents
+* [Screenshots](#screenshots)
 * [What is Portable AI Studio?](#what-is-uncensored-ai-studio)
 * [Key Features](#key-features)
 * [Workspace & Engine Architecture](#workspace-architecture)
